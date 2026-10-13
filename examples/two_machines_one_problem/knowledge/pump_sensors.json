@@ -1,0 +1,22 @@
+{
+  "asset_id": "pump-01",
+  "description": "Centrifugal pump P-101, drive-end sensor package",
+  "vibration_alarm_mm_s": 4.5,
+  "trend": [
+    { "t": "-21d", "vibration_mm_s": 2.0, "temperature_c": 63 },
+    { "t": "-14d", "vibration_mm_s": 2.2, "temperature_c": 64 },
+    { "t": "-10d", "vibration_mm_s": 3.9, "temperature_c": 71 },
+    { "t": "-7d", "vibration_mm_s": 5.1, "temperature_c": 76 },
+    { "t": "-3d", "vibration_mm_s": 6.8, "temperature_c": 82 },
+    { "t": "now", "vibration_mm_s": 8.2, "temperature_c": 87 }
+  ],
+  "on_demand_measurements": {
+    "motor_current_a": 14.9,
+    "motor_current_nominal_a": 11.5,
+    "vibration_spectrum": {
+      "1x_rpm_mm_s": 2.1,
+      "2x_rpm_mm_s": 5.6,
+      "note": "dominant component at 2x running speed"
+    }
+  }
+}
