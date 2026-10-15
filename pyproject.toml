@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loquor-aac"
-version = "0.2.0"
+version = "0.3.0"
 description = "loquor — offline agent-to-agent communication over local transports (Wi-Fi/IP today; BLE, UWB and mesh planned)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,7 +13,6 @@ keywords = ["agents", "a2a", "offline", "mdns", "edge", "local-first"]
 dependencies = [
     "aiohttp>=3.9",
     "pydantic>=2.5",
-    "zeroconf>=0.130",
 ]
 
 [project.scripts]

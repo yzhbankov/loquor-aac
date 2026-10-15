@@ -1,90 +1,255 @@
-# Architecture (PoC v0.1)
+# Architecture
 
-This document describes what is implemented in `src/loquor/` and how the layers fit together. The design rule throughout: **the agent layer is independent of discovery and transport**, so future transports (BLE, UWB, mesh) are adapters, not rewrites.
+loquor is a small platform for agents that talk to each other over local
+transports with no server and no internet. This document is the design:
+the layers, the five interfaces that are the whole contract between them,
+and what is deliberately left out.
+
+## Principles
+
+1. **One protocol, many transports.** Message format, signing and addressing
+   are defined once; a transport only moves bytes to an address.
+2. **Structured messages, optional language.** Agents exchange
+   `{capability, input}` → `{output}` dicts. Free text is one kind of input,
+   not the only kind.
+3. **Deterministic core, LLM at the edge.** The agent routes, retries and
+   tracks peers without a model. Only skills call the reasoner.
+4. **Extend by adding a file, configure by editing JSON.** No plugin
+   framework, no registries beyond a dict of names.
+5. **Build a layer when a demo needs it.** Sensors come with the first
+   sensor demo.
+
+## Layers
 
 ```
-            ┌─────────────────────────────────────────┐
-            │                 Agent                   │
-            │  capabilities · task state machine ·    │
-            │  ask()/resume_pending() · find_peers()  │
-            └──┬───────────┬───────────┬──────────┬───┘
-               │           │           │          │
-        ┌──────┴───┐ ┌─────┴────┐ ┌────┴─────┐ ┌──┴──────────┐
-        │Discovery │ │Transport │ │ Identity │ │  TaskStore  │
-        │ zeroconf │ │  HTTP/IP │ │HMAC pair- │ │   SQLite   │
-        │ / static │ │ (BLE…)   │ │ing secret│ │            │
-        └──────────┘ └──────────┘ └──────────┘ └─────────────┘
-                                       │
-                               ┌───────┴───────┐
-                               │   Reasoner    │
-                               │Ollama/template│
-                               └───────────────┘
+ profile.json
+      │
+┌─────▼─────────────────────────────────────────────────────────┐
+│ agent  — orchestrator (no business logic)                     │
+│   PeerDirectory   RequestTracker   dispatch(capability→skill) │
+│                                                               │
+│   skills/  llm_answer · goal · <yours>        ← business logic│
+│            each gets a Context: reasoner, peers, ask()        │
+└───┬───────────────────┬───────────────────────┬───────────────┘
+    │                   │                       │
+┌───▼────────┐    ┌─────▼──────┐          ┌─────▼──────┐
+│ protocol   │    │ reasoning  │          │ sensors    │ (later)
+│ Message    │    │ Reasoner   │          │ Sensor     │
+│ sign/verify│    │ ollama     │          │            │
+│ codec      │    │ template   │          │            │
+└───┬────────┘    └────────────┘          └────────────┘
+┌───▼────────────────────────────────┐
+│ transports — bytes + Address only  │
+│ multicast (localhost, wifi) · ble  │
+│ memory (tests)                     │
+└────────────────────────────────────┘
 ```
 
-## Modules
+**Dependency rule:** `agent` imports everything; nothing imports `agent`;
+`protocol`, `transports` and `reasoning` do not import each other.
+`tests/test_architecture.py` enforces it.
 
-### `messages.py` — the wire format
+```
+src/loquor/
+├── protocol/     message.py  signing.py  codec.py
+├── transports/   base.py  multicast.py  memory.py       (ble.py planned)
+├── reasoning/    base.py  ollama.py  template.py
+├── agent/        agent.py  directory.py  tracker.py  context.py  skill.py
+│   └── skills/   llm_answer.py  goal.py
+├── config.py     profile JSON → objects ("type" lookup)
+└── cli.py
+run_agent.py · demo/ · tests/ (one file per package + the dependency rule)
+```
 
-One Pydantic model, `Envelope`, carries every message; `type` selects the semantics:
+## Interfaces
 
-| Type | Direction | Meaning |
+These are the whole contract. Everything else is implementation.
+
+### Transport — `transports/base.py`
+
+```python
+Address = Any          # opaque, transport-specific: an ip:port tuple, a BLE handle
+
+class Transport:
+    max_payload: int   # bytes; the agent refuses larger messages
+    async def start(self, on_receive: Callable[[bytes, Address], None]) -> None
+    async def broadcast(self, data: bytes) -> None          # everyone in range: adverts
+    async def send(self, to: Address, data: bytes) -> None  # one peer: request/response
+    async def stop(self) -> None
+```
+
+Two shapes because real media come in both. Multicast implements `send` as
+`broadcast` (processes on one host share a port, so the group address is the
+only one that reaches them all; the message carries the recipient's uid
+anyway). BLE will implement `broadcast` as a write to each connection and
+`send` as a write to one, with chunking inside the adapter.
+
+| transport | status | reach |
 |---|---|---|
-| `task_request` | requester → server | start a task: capability + observations |
-| `info_request` | server → requester | evidence missing; names what's `needed` and why |
-| `info_response` | requester → server | measurements answering an `info_request` |
-| `task_result` | server → requester | final structured result |
-| `error` | either | validation/auth/processing failure |
+| `localhost` | implemented | processes on one machine; no network needed |
+| `wifi` | implemented | machines on one Wi-Fi, hotspot or wired LAN (multicast, TTL 1) |
+| `memory` | implemented | tests: in-process hub |
+| `bluetooth` | planned | devices in radio range, no Wi-Fi |
 
-All inbound messages are schema-validated before any logic runs. Task/capability vocabulary follows A2A concepts (tasks with ids and lifecycle, capabilities advertised at discovery).
+### Protocol — `protocol/`
 
-### `identity.py` — peer authentication
+```python
+class Message(BaseModel):
+    protocol: str = "loquor/1"
+    type: "advert" | "request" | "response" | "error"
+    msg_id: str                    # unique; duplicates are dropped
+    sender: str                    # uid
+    sender_name: str
+    recipient: str | None          # uid; None for adverts
+    payload: dict
+    sent_at: float
+    signature: str | None          # HMAC-SHA256 over the canonical JSON of the rest
+```
 
-PoC model: paired identities with a pre-shared pairing secret; every envelope is HMAC-SHA256-signed over its canonical JSON and verified on receipt. Unauthenticated messages are rejected before any handler runs. Production path: per-device keypairs, pinned credentials from an explicit pairing ceremony, TLS on the transport.
+| type | payload |
+|---|---|
+| `advert` | `{name, description, capabilities: [tag, ...]}` |
+| `request` | `{request_id, capability, input: {...}}` |
+| `response` | `{request_id, output: {...}}` |
+| `error` | `{request_id, code, detail}` — codes: `no_such_capability`, `skill_failed`, `too_large` |
 
-### `store.py` — persistent task state
+- **Addressing is by uid**, inside the message. A transport address is only a
+  hint for where to send the bytes.
+- **`MAX_MESSAGE_SIZE` = 4 KB**, a protocol constant independent of any
+  transport, so messages stay portable to small radios.
+- **`signing.py`** signs with the shared pairing secret today. Per-device keys
+  are a change inside that one module.
+- **`codec.py`** is `encode(Message) -> bytes` / `decode(bytes) -> Message`.
+  One JSON codec ships; a compact or encrypted one is a second implementation
+  of these two functions.
 
-SQLite table of tasks keyed by `task_id`, with `role` (`requester`/`server`), state, and merged JSON data (observations, collected measurements, result). This is what makes interruption survivable:
+Full details and the rules every agent follows: [PROTOCOL.md](PROTOCOL.md).
 
-- The **requester** marks a task `interrupted` when the peer becomes unreachable and retries it later (`resume_pending`) with the *same* `task_id`.
-- The **server** persists per-task progress and answers a retried `task_request` for a completed task idempotently from the store — no duplicate work, no duplicate results.
+### Reasoner — `reasoning/base.py`
 
-### `discovery.py` — finding peers
+```python
+class Reasoner:
+    async def complete(self, system: str, prompt: str, *,
+                       temperature: float | None = None, schema: dict | None = None) -> str
+```
 
-`Discovery` interface with two implementations:
+`ollama` (a locally served model) and `template` (deterministic, no LLM)
+ship. The reasoner articulates answers and decisions inside skills; it never
+touches protocol state.
 
-- `ZeroconfDiscovery` — mDNS/DNS-SD (`_loquor._tcp.local.`), advertising agent id and capabilities in TXT records. How two laptops on the same Wi-Fi find each other with zero configuration.
-- `StaticDiscovery` — fixed peer list for multicast-free environments (containers, CI) and deterministic tests.
+### Skill and Context — `agent/skill.py`, `agent/context.py`
 
-### `transports/` — moving envelopes
+```python
+class Skill:
+    capability: str = ""                           # advertised; "" = this skill only runs
+    async def handle(self, input: dict, ctx: Context) -> dict   # answer a request
+    async def run(self, ctx: Context) -> None                   # optional background loop
 
-`Transport` interface: `start(handler) -> port`, `send(peer, envelope) -> envelope`. The shipped `HttpTransport` POSTs signed envelopes to `/loquor/v1/message` over Wi-Fi/IP (aiohttp both sides) and serves `/loquor/v1/capabilities`. A `PeerUnreachable` exception is the uniform signal for disconnection, whatever the transport. BLE (Bleak client + a peripheral implementation) is the planned second adapter.
+class Context:
+    uid, name, reasoner
+    sensors: dict                                  # reserved for the sensors layer
+    def peers(self, capability: str | None = None) -> list[Peer]
+    async def ask(self, peer: Peer, capability: str, input: dict, timeout=None) -> dict
+    async def wait_for_peers(self) -> None         # returns when the next advert is heard
+    def log(self, msg, *args)
+```
 
-### `reasoning.py` — local models
+Business logic lives in skills. A skill that raises makes the requester
+receive `error{skill_failed}`; the agent never dies because a skill did.
 
-`Reasoner` interface with `OllamaReasoner` (local Ollama HTTP API, small quantized 1.5B–3B models) and a deterministic `TemplateReasoner` fallback. The reasoner **articulates** hypotheses and recommendations; it never decides protocol state. Deterministic logic owns task states, retries, permissions, and the final structured output — which is also why the whole system is testable in CI without a model.
+## Agent internals — `agent/`
 
-### `agent.py` — the state machine
+Three small classes, each testable alone:
 
-`Agent` composes the above. Server side, a capability handler receives a `TaskContext` (observations + evidence so far) and returns either a result `dict` or `NeedInfo(needed, reason)`; the agent persists state transitions (`in_progress` → `awaiting_info` → … → `completed`) and replies accordingly. Requester side, `ask()` drives the loop: send request, answer `info_request`s via an info provider callback, persist every step, surface the final result — and park the task as `interrupted` on `PeerUnreachable` for `resume_pending()` to finish later.
+| class | responsibility |
+|---|---|
+| `PeerDirectory` | adverts in → `Peer(uid, name, description, capabilities, address, last_seen)`; forgotten after 3 missed adverts |
+| `RequestTracker` | outbound `request_id → Future`; inbound `(sender, request_id) → cached reply`, so a retried request gets the same answer and the skill never runs twice |
+| `Agent` | start/stop the transport, advert loop, verify + dedupe inbound, dispatch a request to the skill with that capability, `ask()` with retries |
 
-## The broadcast agent (`broadcast.py`, `broadcast_agent.py`, `cli.py`)
+Flow of one request:
 
-The prompt-configured agent used by `run_agent.py` and the example. Its
-protocol is specified in [PROTOCOL.md](PROTOCOL.md): every agent advertises
-its uid and capabilities on a shared channel (UDP multicast on loopback or the
-LAN), listens to everything, answers requests addressed to its uid with its
-LLM, and — if its profile has a goal — asks the agents that can help.
+```
+skill A: ctx.ask(peer, "weather_forecast", {"question": ...})
+  agent A: request{request_id, capability, input} → transport.send(peer.address)   (retried up to 3×)
+    agent B: verify, dedupe → tracker.cached? resend : skills["weather_forecast"].handle(input, ctx)
+    agent B: response{request_id, output} → transport.send(address of the request)
+  agent A: tracker.resolve(request_id, output) → ctx.ask returns output
+```
 
-The HTTP `Agent` above (point-to-point tasks with persisted state and
-resume) remains in the library; the example uses the broadcast agent.
+## Skills that ship
 
-## The demo (`demo/weather_and_clothes/`)
+| skill | `handle` | `run` |
+|---|---|---|
+| `llm_answer` | `{"question"}` → `{"answer"}` via the reasoner with a `system_prompt` | — |
+| `goal` | — | for each peer heard: decide with the reasoner whether it can help and what to ask; `ask`; reason over the answer; done once |
 
-- `weather_agent.json` — no goal; advertises `weather_forecast` and answers with a random forecast (`{random_number}` in its system prompt).
-- `clothing_agent.json` — goal: recommend what to wear tomorrow; finds the forecaster, asks it, recommends clothes.
+A user skill is one file:
 
-## Test coverage vs. the PoC's three tests
+```python
+# my_farm/irrigation.py
+from loquor import Skill
 
-1. **Truly offline** — everything runs on loopback/LAN with no external calls; the only optional network dependency is a *local* Ollama. Covered by `tests/test_collaboration.py` and `tests/test_broadcast.py`.
-2. **Interrupted collaboration** — `test_interrupt_and_resume` kills the server mid-exchange, restarts it on the same store, and verifies resume with no duplicates.
-3. **Collaboration adds intelligence** — not yet implemented: needs a labeled case set and an A-alone/B-alone/A+B benchmark harness. Tracked on the roadmap.
+class Irrigation(Skill):
+    capability = "irrigation_plan"
+
+    async def run(self, ctx):
+        while True:
+            for forecaster in ctx.peers("weather_forecast"):
+                out = await ctx.ask(forecaster, "weather_forecast", {"question": "Rain tomorrow?"})
+                ctx.log("forecast: %s", out["answer"])
+            await ctx.wait_for_peers()
+```
+
+## Profile — `config.py`
+
+```json
+{
+  "name": "Weather Station",
+  "description": "One sentence other agents read to decide whether you can help them.",
+  "system_prompt": "Default persona for every skill that takes one.",
+  "transport": { "type": "wifi" },
+  "reasoner":  { "type": "ollama", "model": "qwen2.5:3b" },
+  "skills": [
+    { "type": "llm_answer", "capability": "weather_forecast", "temperature": 1.0 },
+    { "type": "my_farm.irrigation:Irrigation" }
+  ]
+}
+```
+
+Every part is `{"type": ..., **constructor kwargs}`. `type` is a built-in name
+(`localhost`, `wifi`; `ollama`, `template`; `llm_answer`, `goal`) or
+`"module:Class"` for your own. That lookup is the entire extension mechanism.
+`transport` defaults to `localhost`, `reasoner` to Ollama. Command-line
+`--transport`, `--interface` and `--model` override the profile.
+
+## What is deliberately not here
+
+- **No discovery layer.** Adverts over the transport *are* discovery.
+- **No persistence.** Request state lives in memory for the life of the
+  process. Add a store when a demo needs resume-after-restart.
+- **No event bus.** Skills call `ctx.ask`; the agent calls `skill.handle`.
+  Two directions, no pub-sub.
+- **No multi-hop routing.** A peer is someone whose advert you heard directly.
+  A mesh transport may route internally and present a flat channel.
+- **No protocol pluggability.** The codec boundary exists; the semantics
+  (advert / request / response) are fixed. Interop with foreign agent
+  protocols is out of scope; devices speaking industrial protocols belong in
+  the sensors layer, not as peers.
+
+## Security (PoC level)
+
+All agents share one pairing secret; anyone who has it can join and
+impersonate any uid. No replay protection beyond `msg_id` deduplication
+within a run, no encryption. Signing sits in the protocol layer, so per-device
+keys and encrypted payloads are local changes when they come.
+
+## Roadmap
+
+1. **Bluetooth** — `transports/ble.py`: `bleak` for scanning/connecting,
+   a peripheral implementation for accepting connections, chunking to the
+   MTU. Nothing above the transport changes.
+2. **Sensors** — `sensors/` with the first sensor demo; `Context.sensors`
+   is reserved for it.
+3. **Two-laptop verification** over Wi-Fi / hotspot.
+4. **Security** — per-device keys, pairing ceremony, encrypted payloads.

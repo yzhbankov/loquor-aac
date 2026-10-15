@@ -2,25 +2,27 @@
 
 *loquor* (Latin): "I speak", "I talk", "I say".
 
-The package lets independent AI-powered devices discover each other on a
-local network, authenticate, exchange structured messages, and collaborate
-on tasks — without internet access or a central server.
+Independent AI agents on different devices discover each other over a local
+transport, exchange signed structured messages, and collaborate — with no
+internet, no cloud and no central server. See docs/ARCHITECTURE.md.
 """
 
-from loquor.agent import Agent, PeerInfo
-from loquor.messages import (
-    Envelope,
-    MessageType,
-    TaskState,
-)
+from loquor.agent import Agent, Context, Peer, RequestError, Skill
+from loquor.protocol import Message, MessageType
+from loquor.reasoning import Reasoner
+from loquor.transports import Transport
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Agent",
-    "PeerInfo",
-    "Envelope",
+    "Context",
+    "Message",
     "MessageType",
-    "TaskState",
+    "Peer",
+    "Reasoner",
+    "RequestError",
+    "Skill",
+    "Transport",
     "__version__",
 ]
