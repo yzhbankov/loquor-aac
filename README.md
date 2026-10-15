@@ -2,20 +2,26 @@
 
 **loquor** — Latin for *"I speak"*, *"I talk"*, *"I say"*. **aac** — agent-to-agent communication.
 
-AI agents on different devices that find each other, authenticate and
-collaborate **offline** — over Wi-Fi today, Bluetooth next — with no
-internet, no cloud and no central server. Each agent runs its own local LLM
-and keeps its own knowledge; together they do what neither could alone.
+AI agents on different **devices** — robots, machines, sensor nodes,
+vehicles, handhelds — that find each other, authenticate and collaborate
+**offline**, over whatever local radio they have: Wi-Fi today, Bluetooth
+next. No internet, no cloud, no central server. Each agent runs its own
+local LLM and keeps its own knowledge; together they do what neither could
+alone.
 
 ```
-   laptop A                                   laptop B
- ┌──────────────────┐     same Wi-Fi /     ┌───────────────────┐
- │ Clothing Advisor │◀───── hotspot ──────▶│ Weather Forecaster│
- │  (qwen2.5 via    │  beacon · HELLO ·    │  (qwen2.5 via     │
- │   Ollama)        │  encrypted MSG/ACK   │   Ollama)         │
+   device A  (robot, sensor node, …)          device B  (machine, handheld, …)
+ ┌──────────────────┐    any local link    ┌───────────────────┐
+ │   agent + skills │◀──  Wi-Fi · BLE  ──▶│   agent + skills  │
+ │   local LLM      │  beacon · HELLO ·    │   local LLM       │
+ │   own knowledge  │  encrypted MSG/ACK   │   own knowledge   │
  └──────────────────┘                      └───────────────────┘
-      "what do I wear tomorrow?"  ──▶  "12 °C, cloudy"  ──▶  "light jacket, jeans"
 ```
+
+The demo in this repo runs two such agents on two laptops (or one) because
+that is the fastest way to see it work; nothing in the code knows or cares
+that it is a laptop. The same agent, profile and protocol run on anything
+with Python and a local model.
 
 ## How it works, in one minute
 
@@ -51,7 +57,7 @@ python run_agent.py demo/weather_and_clothes/clothing_agent.json  # terminal 2
 ```
 
 Within ~15 s terminal 2 prints `=== Goal complete ===` with the forecast it
-got and the clothes it recommends. Two machines on one Wi-Fi: add
+got and the clothes it recommends. Two devices on one Wi-Fi: add
 `--transport wifi` on both. Full walkthrough, what the log lines mean, and
 troubleshooting: [demo/weather_and_clothes/README.md](demo/weather_and_clothes/README.md).
 
@@ -123,7 +129,7 @@ loquor-aac/
 | AMP v1 core: persisted identity, signed CBOR envelopes, beacons, HELLO handshake, encryption, ACK, visibility | Bluetooth transport (beacons as advertisements, envelopes over GATT/L2CAP) |
 | Extensions: QUERY/OFFER, session negotiation, relay store-and-forward, trust levels with pinned keys | Session transports (TCP on Wi-Fi, BLE L2CAP); relay gossip message |
 | `localhost` and `wifi` transports; agent with skills, trust enforcement, idempotent answers | Pairing ceremony (QR / fingerprint) to pin keys from the CLI |
-| Demo verified on one machine over Wi-Fi multicast | Two-laptop run; UWB proximity; sensors layer |
+| Demo verified on one computer over Wi-Fi multicast | Two-device run; UWB proximity; sensors layer |
 
 Why this exists and where it is going: [docs/VISION.md](docs/VISION.md),
 [docs/POC_PLAN.md](docs/POC_PLAN.md).
