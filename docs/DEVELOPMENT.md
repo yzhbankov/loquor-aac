@@ -66,6 +66,48 @@ Patterns worth copying:
 - Tests that need real multicast `pytest.skip` when the environment has none
   (some CI runners).
 
+## Profile reference
+
+Every field of an agent profile. Only `name`, `description` and `skills`
+are required; `--transport`, `--interface`, `--model` and `--visibility`
+on the command line override the profile.
+
+| field | type | meaning |
+|---|---|---|
+| `name` | str | human-readable name; also the key file name and the log label |
+| `description` | str | one sentence other agents' LLMs read to decide whether you can help |
+| `system_prompt` | str | default persona for every skill that takes a `system_prompt` |
+| `visibility` | `visible` \| `quiet` \| `silent` | beacon and answer policy (PROTOCOL §3); default `visible` |
+| `key_file` | path | Ed25519 seed; default `~/.loquor/keys/<name>.key`, created on first run |
+| `pinned_keys` | path | level-1 trust store; default `~/.loquor/pinned_keys.json` |
+| `relay` | bool | store and forward envelopes for peers out of reach (PROTOCOL §8); default false |
+| `transport` | part | `localhost` (default), `wifi` (`interface` optional), or a custom class |
+| `reasoner` | part | `ollama` (`model`, `base_url`, `temperature`), `template`, or a custom class |
+| `sensors` | [part] | drivers that produce readings; each needs a unique `name` |
+| `triggers` | [part] | drivers that perform actions; each needs a unique `name` |
+| `skills` | [part] | at least one; built-ins below or custom classes |
+
+A *part* is `{"type": T, ...kwargs}` where `T` is a built-in name,
+`"module:Class"` (installed module) or `"file.py:Class"` (path relative to
+the profile). The kwargs are the constructor's; unknown ones fail at
+startup with the constructor's error. Sensor and trigger types may be
+plain functions.
+
+Built-in parts and their arguments:
+
+| part | `type` | arguments |
+|---|---|---|
+| skill | `llm_answer` | `capability`, `system_prompt`, `temperature` (0.2), `sensors` ([names]), `max_chars` (3000) |
+| skill | `goal` | `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]) |
+| skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) |
+| sensor | `simulated` | `name`, `min`, `max`, `unit`, `step`, `interval`, `description`, `start` |
+| sensor | `command` | `name`, `command`, `unit`, `interval`, `description`, `timeout` (10) |
+| trigger | `console` | `name` (`print`), `description`, `input_schema` (`{text}`), `template` |
+| trigger | `command` | `name`, `command`, `description`, `input_schema`, `timeout` (30) |
+| reasoner | `ollama` | `model` (`qwen2.5:3b` or `$LOQUOR_MODEL`), `base_url`, `temperature` |
+| reasoner | `template` | — |
+| transport | `localhost`, `wifi` | `interface` (wifi), `port` (47600) |
+
 ## Add a skill
 
 A skill is one class. It can answer requests (`handle`), run a loop

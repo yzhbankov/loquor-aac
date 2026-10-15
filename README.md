@@ -77,9 +77,12 @@ An agent is a JSON profile. Built-in parts are picked by name; your own by
   "name": "Soil Station",
   "description": "I report soil moisture and decide whether to water.",
   "reasoner": { "type": "ollama", "model": "qwen2.5:3b" },
+  "sensors":  [ { "type": "simulated", "name": "soil", "unit": "%", "min": 5, "max": 60, "interval": 30 } ],
+  "triggers": [ { "type": "drivers/relay.py:PumpRelay", "port": "/dev/ttyUSB1" } ],
   "skills": [
-    { "type": "llm_answer", "capability": "soil_report",
-      "system_prompt": "You report soil moisture. Reading: {random_number} %." },
+    { "type": "llm_answer", "capability": "soil_report", "sensors": ["soil"],
+      "system_prompt": "You report soil moisture from your sensor:\n{sensors}" },
+    { "type": "sensor_report" },
     { "type": "my_farm.irrigation:Irrigation" }
   ]
 }
@@ -90,21 +93,31 @@ An agent is a JSON profile. Built-in parts are picked by name; your own by
 from loquor import Skill
 
 class Irrigation(Skill):
-    capability = "irrigation_plan"
+    sensors = ("soil",)                            # checked at startup
+    triggers = ("pump",)
 
     async def run(self, ctx):                      # background loop
         while True:
-            for forecaster in ctx.peers("weather_forecast"):
-                out = await ctx.ask(forecaster, "weather_forecast", {"question": "Rain tomorrow?"})
-                ctx.log("forecast: %s", out["answer"])
+            soil = await ctx.sensors.read("soil")
+            forecast = "unknown"
+            for peer in ctx.peers("weather_forecast"):
+                forecast = (await ctx.ask(peer, "weather_forecast", {"question": "Rain tomorrow?"}))["answer"]
+            proposal = await ctx.triggers.propose(          # the LLM proposes; the schema decides
+                "You run the irrigation.", f"{soil.text()}\nForecast: {forecast}", allowed=["pump"])
+            if proposal:
+                await ctx.triggers.fire(proposal.trigger, proposal.input)
             await ctx.wait_for_peers()
 ```
 
-A sensor or a trigger is just as small — see the demo's
-[`weather_sensor.py`](demo/weather_and_clothes/weather_sensor.py) and
-[`fancy_print.py`](demo/weather_and_clothes/fancy_print.py), or the UART
-examples in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Profile fields,
-skill interface and extension points: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+A sensor is a class with `read()`; a trigger is a class with `fire()` and a
+JSON schema for its input. The agent only ever talks to them through that
+contract, so what is behind it — a UART, a GPIO, a subprocess — is the
+driver's business.
+
+Working examples: the demo's [`weather_sensor.py`](demo/weather_and_clothes/weather_sensor.py)
+and [`fancy_print.py`](demo/weather_and_clothes/fancy_print.py); a UART
+thermometer and a serial relay in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md),
+with the rules for writing your own and every profile field.
 
 ## Develop
 
