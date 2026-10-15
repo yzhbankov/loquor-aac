@@ -11,7 +11,7 @@ from loquor.broadcast_agent import AgentProfile, BroadcastAgent
 from loquor.reasoning import Reasoner
 
 SECRET = "test-pairing-secret"
-EXAMPLES = Path(__file__).parent.parent / "examples" / "weather_and_clothes"
+EXAMPLES = Path(__file__).parent.parent / "demo" / "weather_and_clothes"
 
 WEATHER = AgentProfile(
     name="Weather Forecaster",

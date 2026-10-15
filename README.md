@@ -37,7 +37,7 @@ loquor-aac/
 ├── docs/                       Vision, PoC plan, architecture, protocol spec
 ├── src/loquor/                 The library
 ├── run_agent.py                Runs one agent from a profile JSON
-├── examples/weather_and_clothes/   Two agent profiles + how to run them
+├── demo/weather_and_clothes/    Two agent profiles + how to run them
 └── tests/
 ```
 
@@ -49,13 +49,13 @@ Needs Python 3.10+ and [Ollama](https://ollama.com) running locally.
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ollama pull qwen2.5:3b                                        # once
-python run_agent.py examples/weather_and_clothes/weather_agent.json    # terminal 1
-python run_agent.py examples/weather_and_clothes/clothing_agent.json   # terminal 2
+python run_agent.py demo/weather_and_clothes/weather_agent.json    # terminal 1
+python run_agent.py demo/weather_and_clothes/clothing_agent.json   # terminal 2
 ```
 
 Within a few seconds the Clothing Advisor hears the Weather Forecaster,
 decides it needs a forecast, asks for one and prints what to wear tomorrow.
-See [examples/weather_and_clothes](examples/weather_and_clothes/README.md)
+See [demo/weather_and_clothes](demo/weather_and_clothes/README.md)
 for running on two machines. Profile fields: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ### Tests

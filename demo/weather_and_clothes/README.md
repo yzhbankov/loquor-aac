@@ -19,8 +19,8 @@ ollama pull qwen2.5:3b
 Two terminals, both in the repo root with `source .venv/bin/activate`:
 
 ```bash
-python run_agent.py examples/weather_and_clothes/weather_agent.json    # terminal 1
-python run_agent.py examples/weather_and_clothes/clothing_agent.json   # terminal 2
+python run_agent.py demo/weather_and_clothes/weather_agent.json    # terminal 1
+python run_agent.py demo/weather_and_clothes/clothing_agent.json   # terminal 2
 ```
 
 Within ~15 s terminal 2 prints `=== Goal complete ===` with the forecast and
@@ -34,11 +34,11 @@ Use the same secret on both:
 ```bash
 # machine A
 export LOQUOR_PAIRING_SECRET=my-secret
-python run_agent.py examples/weather_and_clothes/weather_agent.json --transport wifi
+python run_agent.py demo/weather_and_clothes/weather_agent.json --transport wifi
 
 # machine B
 export LOQUOR_PAIRING_SECRET=my-secret
-python run_agent.py examples/weather_and_clothes/clothing_agent.json --transport wifi
+python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport wifi
 ```
 
 ## Options
