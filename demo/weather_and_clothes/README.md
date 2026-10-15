@@ -1,9 +1,13 @@
 # Demo: Weather & Clothes
 
-Two agents, two processes, each with its own local LLM. The **Weather
-Forecaster** can answer "what's the weather tomorrow?". The **Clothing
-Advisor** has a goal — recommend what to wear — but no weather. It finds the
-forecaster, asks, and recommends.
+Two agents, each with its own local LLM, standing in for two devices. The
+**Weather Forecaster** can answer "what's the weather tomorrow?". The
+**Clothing Advisor** has a goal — recommend what to wear — but no weather.
+It finds the forecaster, asks, and recommends.
+
+Laptops are just the quickest hardware to demo on. Think of the two agents
+as a robot and a base station, two sensor nodes, or a handheld meeting a
+machine: the protocol, the profiles and the code are identical.
 
 ```mermaid
 sequenceDiagram
@@ -23,7 +27,7 @@ sequenceDiagram
     Note over C: LLM turns the forecast into clothes → "=== Goal complete ==="
 ```
 
-## 1. Setup (once per machine)
+## 1. Setup (once per device)
 
 Needs Python 3.10+ and [Ollama](https://ollama.com). In the repo root:
 
@@ -36,7 +40,7 @@ ollama pull qwen2.5:3b          # the model both profiles use, ~2 GB
 
 Check: `ollama list` shows `qwen2.5:3b`.
 
-## 2. Run on one machine
+## 2. Run on one computer
 
 Two terminals, both in the repo root with the venv active:
 
@@ -49,7 +53,7 @@ Start them in any order. Stop with Ctrl-C.
 
 ### What you will see
 
-Terminal 2 (the advisor), about 15 s end to end on a laptop:
+Terminal 2 (the advisor), about 15 s end to end on a laptop used for the demo:
 
 ```
 clothing-advisor-3d42fca5 | id 3d42fca5… | model qwen2.5:3b (ollama) | transport localhost (127.0.0.1) | visible | Ctrl-C to stop
@@ -90,20 +94,21 @@ Things to try:
 - Stop the forecaster: ~30 s later the advisor logs `lost weather-forecaster-…`.
 - `--wire no-handshake` hides HELLO/ACK lines; `--wire off` hides all envelopes; `-v` also shows beacons.
 
-## 3. Run on two machines
+## 3. Run on two devices
 
-Both machines on the same Wi-Fi or one machine's hotspot (no internet
-needed), each set up as in step 1:
+Two laptops are the easy stand-in; any two devices that run Python and a
+local model behave the same. Both on the same Wi-Fi or one device's hotspot
+(no internet needed), each set up as in step 1:
 
 ```bash
-# machine A
+# device A
 python run_agent.py demo/weather_and_clothes/weather_agent.json --transport wifi
 
-# machine B
+# device B
 python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport wifi
 ```
 
-The startup line should show `transport wifi (192.168.x.x)` — the machine's
+The startup line should show `transport wifi (192.168.x.x)` — the device's
 LAN address, not `127.0.0.1`. Nothing to pair: each agent finds the other by
 its beacons, exchanges keys in the handshake and encrypts from there.
 
@@ -111,10 +116,10 @@ If macOS asks "allow incoming network connections?", click Allow.
 
 ### Fully offline test
 
-1. While online, do step 1 on both machines and run step 2 once on each.
+1. While online, do step 1 on both devices and run step 2 once on each.
 2. Use a router with its uplink unplugged, or an Android hotspot with mobile
    data off (an iPhone hotspot usually needs data on).
-3. `curl -m 5 https://example.com` must fail; `ping <other machine>` must work.
+3. `curl -m 5 https://example.com` must fail; `ping <other device>` must work.
 4. Run step 3.
 
 ## 4. Options
@@ -136,6 +141,6 @@ If macOS asks "allow incoming network connections?", click Allow.
 | `ModuleNotFoundError` | activate the venv, `pip install -r requirements.txt` |
 | agents never `met` each other | same `--transport` on both; neither `--visibility silent`; wait one beacon interval |
 | `no LAN interface found for wifi transport` | join a Wi-Fi network or hotspot, or pass `--interface` |
-| two machines silent, same Wi-Fi | guest/corporate Wi-Fi isolates clients and drops multicast — use a hotspot or home router |
+| two devices silent, same Wi-Fi | guest/corporate Wi-Fi isolates clients and drops multicast — use a hotspot or home router |
 | `DROP … bad signature` | a peer's key changed (it deleted `~/.loquor/keys/`); it will re-handshake on its next beacon |
-| slow answers | both agents share one Ollama; a 3B model answers in 1–5 s per request on a laptop |
+| slow answers | on one computer both agents share one Ollama; a 3B model answers in 1–5 s per request on a laptop |
