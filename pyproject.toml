@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loquor-aac"
-version = "0.1.0"
+version = "0.2.0"
 description = "loquor — offline agent-to-agent communication over local transports (Wi-Fi/IP today; BLE, UWB and mesh planned)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,14 +12,21 @@ license = { text = "Apache-2.0" }
 keywords = ["agents", "a2a", "offline", "mdns", "edge", "local-first"]
 dependencies = [
     "aiohttp>=3.9",
+    "certifi>=2024.2.2",
     "pydantic>=2.5",
     "zeroconf>=0.130",
 ]
+
+[project.scripts]
+loquor = "loquor.cli:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+]
+build = [
+    "pyinstaller>=6.10",
 ]
 
 [tool.setuptools.packages.find]

@@ -67,14 +67,24 @@ SQLite table of tasks keyed by `task_id`, with `role` (`requester`/`server`), st
 
 `Agent` composes the above. Server side, a capability handler receives a `TaskContext` (observations + evidence so far) and returns either a result `dict` or `NeedInfo(needed, reason)`; the agent persists state transitions (`in_progress` → `awaiting_info` → … → `completed`) and replies accordingly. Requester side, `ask()` drives the loop: send request, answer `info_request`s via an info provider callback, persist every step, surface the final result — and park the task as `interrupted` on `PeerUnreachable` for `resume_pending()` to finish later.
 
-## The demo (`examples/two_machines_one_problem/`)
+## The broadcast agent (`broadcast.py`, `broadcast_agent.py`, `cli.py`)
 
-- `pump_agent.py` — Device A: detects the vibration anomaly from its trend data, finds a `maintenance_diagnostics` peer, supplies motor-current and spectrum measurements on request, cross-checks the returned hypothesis against local trends, emits the final structured recommendation.
-- `inspection_agent.py` — Device B: searches its maintenance records, requests the measurements it lacks, selects a failure-mode hypothesis deterministically from the combined evidence, attaches repair instructions and record references.
-- `run_demo.py` — both agents in one process on loopback (CI-friendly); `--interrupt` demonstrates disconnect-and-resume. The real two-laptop setup runs the two scripts with `--mdns`.
+The prompt-configured agent used by `loquor run` and the example. Its
+protocol is specified in [PROTOCOL.md](PROTOCOL.md): every agent advertises
+its uid and capabilities on a shared channel (UDP multicast on loopback or the
+LAN), listens to everything, answers requests addressed to its uid with its
+LLM, and — if its profile has a goal — asks the agents that can help.
+
+The HTTP `Agent` above (point-to-point tasks with persisted state and
+resume) remains in the library; the example uses the broadcast agent.
+
+## The example (`examples/weather_and_clothes/`)
+
+- `weather_agent.json` — no goal; advertises `weather_forecast` and answers with a random forecast (`{random_number}` in its system prompt).
+- `clothing_agent.json` — goal: recommend what to wear tomorrow; finds the forecaster, asks it, recommends clothes.
 
 ## Test coverage vs. the PoC's three tests
 
-1. **Truly offline** — everything runs on loopback/LAN with no external calls; the only optional network dependency is a *local* Ollama. Covered by `tests/test_demo.py` and `tests/test_collaboration.py`.
-2. **Interrupted collaboration** — `test_interrupt_and_resume` kills the server mid-exchange, restarts it on the same store, and verifies resume with no duplicates; also runnable interactively via `run_demo.py --interrupt`.
+1. **Truly offline** — everything runs on loopback/LAN with no external calls; the only optional network dependency is a *local* Ollama. Covered by `tests/test_collaboration.py` and `tests/test_broadcast.py`.
+2. **Interrupted collaboration** — `test_interrupt_and_resume` kills the server mid-exchange, restarts it on the same store, and verifies resume with no duplicates.
 3. **Collaboration adds intelligence** — not yet implemented: needs a labeled case set and an A-alone/B-alone/A+B benchmark harness. Tracked on the roadmap.

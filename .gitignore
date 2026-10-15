@@ -221,3 +221,4 @@ __marimo__/
 
 # loquor agent task stores
 *.db
+.idea
