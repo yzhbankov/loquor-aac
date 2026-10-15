@@ -33,6 +33,9 @@ from loquor.agent.context import Context
 from loquor.agent.skill import Skill
 from loquor.agent.tracker import RequestError, RequestTracker
 from loquor.extensions.query import QueryExtension
+from loquor.extensions.relay import RelayExtension
+from loquor.extensions.session import SessionExtension
+from loquor.extensions.trust import PinnedKeys, TrustExtension
 from loquor.protocol.card import AgentCard, skill_entry
 from loquor.protocol.discovery import Peer, Visibility
 from loquor.protocol.identity import Identity
@@ -60,6 +63,8 @@ class Agent:
         beacon_interval: float = 10.0,
         request_timeout: float = 30.0,
         max_attempts: int = 3,
+        pinned_keys: str | None = None,  # path of the level-1 trust store (§9)
+        relay: bool = False,  # store and forward for peers out of reach (§8)
     ):
         self.name = name
         self.description = description
@@ -80,6 +85,9 @@ class Agent:
                          beacon_interval=beacon_interval)
         self.node.on_message(self._on_body)
         self.query = QueryExtension(self.node)
+        self.sessions = SessionExtension(self.node)
+        self.trust = TrustExtension(self.node, stores=[PinnedKeys(pinned_keys)] if pinned_keys else [])
+        self.relay = RelayExtension(self.node) if relay else None
         self.tracker = RequestTracker()
         self.context = Context(self)
         self._tasks: set[asyncio.Task] = set()

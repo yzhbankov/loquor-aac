@@ -16,15 +16,17 @@ This is different from asking a cloud chatbot a question: two independent intell
 
 ## The platform
 
-One agent program, configured by a JSON profile, built from four layers
-with one small interface each (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
+One agent program, configured by a JSON profile, speaking **AMP v1** (the
+Agent Mesh Protocol, [docs/PROTOCOL.md](docs/PROTOCOL.md)) and built from
+layers with one small interface each ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
 
 | layer | what it is | ships with |
 |---|---|---|
-| **protocol** | one signed message format, the same on every transport | `advert` / `request` / `response` / `error` |
+| **protocol** | Ed25519 identity, signed CBOR envelopes, 16-byte beacons, HELLO handshake, ChaCha20-Poly1305 between peers | types `HELLO` / `HELLO_ACK` / `MSG` / `ACK` |
 | **transports** | move bytes to everyone in range or to one peer | `localhost`, `wifi` (multicast); `bluetooth` planned |
+| **extensions** | optional protocol features | `QUERY`/`OFFER`, sessions, relay, trust levels |
 | **reasoning** | a local LLM behind a one-method interface | Ollama, deterministic template |
-| **agent** | orchestrator: advertise, track peers, dispatch requests to **skills**, ask with retries | skills `llm_answer`, `goal` |
+| **agent** | orchestrator: dispatch requests to **skills** by capability, enforce trust, ask with retries | skills `llm_answer`, `goal` |
 
 Business logic lives in skills. Your own skill, reasoner or transport is one
 Python class, selected in the profile by `"type": "module:Class"`.
@@ -32,7 +34,7 @@ Python class, selected in the profile by `"type": "module:Class"`.
 ```
 loquor-aac/
 ├── docs/                        Vision, PoC plan, architecture, protocol spec
-├── src/loquor/                  protocol/ transports/ reasoning/ agent/ config.py cli.py
+├── src/loquor/                  protocol/ transports/ extensions/ reasoning/ agent/ config.py cli.py
 ├── run_agent.py                 Runs one agent from a profile JSON
 ├── demo/weather_and_clothes/    Two agent profiles + how to run them
 └── tests/
@@ -64,16 +66,17 @@ python -m pytest                                      # no model needed
 
 ## Status and roadmap
 
-- [x] Signed, structured messages; one protocol on every transport
+- [x] AMP v1 core: persisted Ed25519 identity, signed CBOR envelopes, beacons with capability Bloom filter, HELLO handshake, encrypted bodies, ACKs, visibility policies
+- [x] Extensions: QUERY/OFFER, session negotiation (interface only), relay store-and-forward, trust levels with pinned keys
 - [x] `localhost` and `wifi` (LAN multicast) transports
-- [x] Agent with skills: capability dispatch, idempotent answers, retries
+- [x] Agent with skills: capability dispatch, trust enforcement, idempotent answers, retries
 - [x] Local LLM reasoning via Ollama, with deterministic fallback
 - [x] Profiles with built-in and custom (`module:Class`) parts
 - [ ] Verified two-laptop run over Wi-Fi / hotspot
 - [ ] Bluetooth (BLE) transport adapter (same agent, new transport)
+- [ ] Session transports (TCP on Wi-Fi, BLE L2CAP); relay gossip wire message
+- [ ] UWB proximity (trust level 2)
 - [ ] Sensors layer with a first sensor demo
-- [ ] UWB / mesh transports, multi-peer collaboration
-- [ ] Per-device keys, pairing ceremony, encrypted payloads
 
 ## License
 

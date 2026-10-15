@@ -85,8 +85,8 @@ HELLO or any valid envelope), and discards the pair key.
 | 4 | `ACK` | ✅ | the acknowledged `msg_id` (16 bytes) — plaintext, unicast |
 | 5 | `QUERY` | extension | CBOR `{capability: str, nonce: 8B}` — broadcast, plaintext |
 | 6 | `OFFER` | extension | CBOR `{capability: str, nonce: 8B}` — unicast reply, plaintext |
-| 7 | `SESSION_REQ` | extension | not yet implemented |
-| 8 | `SESSION_ACK` | extension | not yet implemented |
+| 7 | `SESSION_REQ` | extension | CBOR `{purpose: str, hint: str, nonce: 8B}` — unicast, plaintext |
+| 8 | `SESSION_ACK` | extension | CBOR `{nonce: 8B, transport: str, params: {...}}` — unicast, plaintext |
 | 16+ | reserved | | decoded, ignored |
 
 Handshake:
@@ -153,24 +153,46 @@ beacon Bloom filter is derived from them. The agent builds the card from
 its skills (`capability`, `description`, `input_schema`, `output_schema`,
 `min_trust`) and its reasoner (`model`).
 
-## 7. Sessions **(extension, not yet implemented)**
+## 7. Sessions **(extension)** — `extensions/session.py`
 
-SESSION_REQ `{purpose, transport_hint}` / SESSION_ACK `{transport, params}`
-negotiated inside envelopes. Core messaging never depends on a session.
+A bulk or stream link is negotiated inside envelopes, WebRTC-style:
 
-## 8. Relay / gossip **(extension, not yet implemented)**
+1. A sends SESSION_REQ `{purpose, hint, nonce}` (hint: a transport name,
+   e.g. `wifi`).
+2. B picks the hinted transport if it has one, else any it has, else answers
+   `"none"`; it replies SESSION_ACK `{nonce, transport, params}` where
+   `params` is whatever A needs to connect.
 
-Nodes advertising `relay` store envelopes with `to != self`, bounded queue,
-expired by `ttl`/age; on contact, exchange `msg_id` Bloom filters and send
-the difference.
+Session transports (TCP/QUIC on the same network preferred, BLE L2CAP as
+fallback) implement the `SessionTransport` interface (`offer(peer) ->
+params`). **None is implemented yet**, so every negotiation today ends in
+`"none"`: keep using core messaging, which never depends on a session.
+
+## 8. Relay / gossip **(extension, partial)** — `extensions/relay.py`
+
+A node whose card says `relay: true` keeps envelopes it overhears that are
+addressed to someone else: `ttl` decremented (dropped when spent), bounded
+queue (256), expired by age (10 min). When it meets the addressee
+(HELLO/HELLO_ACK) it forwards the stored envelopes unchanged — the origin's
+signature still verifies, since `ttl` is not signed, and the relay never
+decrypts. The addressee must have handshaken with the origin to verify.
+A node records the address a peer's envelope *arrived from*, so a peer
+reached through a relay is answered through that relay until it is heard
+directly again.
+
+Gossip between relays has its building blocks (`msg_id` Bloom filter of
+256 bits, k = 3; `missing(their_bloom)`) but **no wire message yet**; it
+will use a type ≥ 16.
 
 ## 9. Trust levels — `trust.py`
 
 | level | name | established by |
 |---|---|---|
 | 0 | `HEARD` | a valid signature (every handshaken peer) |
-| 1 | `VERIFIED` | out-of-band confirmation of the public key (e.g. QR) — store interface pending |
-| 2 | `PROXIMATE` | UWB distance bounding — interface pending |
+| 1 | `VERIFIED` | `PinnedKeys`: the public key was confirmed out of band (QR, fingerprint) and pinned in `~/.loquor/pinned_keys.json` |
+| 2 | `PROXIMATE` | `ProximityProvider` interface (UWB distance bounding) — **stub, nobody is proximate yet** |
+
+`TrustExtension` sets `peer.trust` on every handshake from the stores it has.
 
 A skill declares `min_trust`; it is published in the card and **enforced at
 dispatch**: a request from a peer below the level gets

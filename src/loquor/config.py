@@ -10,6 +10,8 @@ constructor's keyword arguments::
       "system_prompt": "You are ...",                    # default for skills that take one
       "visibility": "visible",                            # visible | quiet | silent
       "key_file": "~/.loquor/keys/weather.key",           # default: derived from the name
+      "pinned_keys": "~/.loquor/pinned_keys.json",        # level-1 trust store (default shown)
+      "relay": false,                                     # store-and-forward for others
       "transport": {"type": "wifi"},                      # default: localhost
       "reasoner":  {"type": "ollama", "model": "qwen2.5:3b"},
       "skills": [
@@ -40,7 +42,7 @@ from loquor.transports import TRANSPORTS, make_transport
 BUILTIN_REASONERS = {"ollama": OllamaReasoner, "template": TemplateReasoner}
 
 PROFILE_FIELDS = {"name", "description", "system_prompt", "visibility", "key_file",
-                  "transport", "reasoner", "skills"}
+                  "pinned_keys", "relay", "transport", "reasoner", "skills"}
 REQUIRED_FIELDS = {"name", "description", "skills"}
 
 
@@ -102,6 +104,8 @@ def build_agent(
         identity=identity,
         visibility=Visibility(visibility or profile.get("visibility") or "visible"),
         beacon_interval=beacon_interval,
+        pinned_keys=str(profile.get("pinned_keys") or loquor_home() / "pinned_keys.json"),
+        relay=bool(profile.get("relay", False)),
     )
 
 

@@ -11,5 +11,20 @@ never depends on any of them.
 """
 
 from loquor.extensions.query import QueryExtension
+from loquor.extensions.relay import MemoryRelayStore, RelayExtension, RelayStore
+from loquor.extensions.session import Session, SessionExtension, SessionTransport
+from loquor.extensions.trust import PinnedKeys, ProximityProvider, TrustExtension, TrustStore
 
-__all__ = ["QueryExtension"]
+__all__ = [
+    "MemoryRelayStore",
+    "PinnedKeys",
+    "ProximityProvider",
+    "QueryExtension",
+    "RelayExtension",
+    "RelayStore",
+    "Session",
+    "SessionExtension",
+    "SessionTransport",
+    "TrustExtension",
+    "TrustStore",
+]

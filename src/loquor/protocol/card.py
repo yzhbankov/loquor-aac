@@ -8,7 +8,8 @@ A subset of the A2A Agent Card, CBOR-encoded, without the web-only fields
       "skills": [{"id": str, "name": str, "description": str, "tags": [str],
                   "input_schema": {...}, "output_schema": {...}, "min_trust": 0}],
       "llm": {"model": str, "context_window": int, "modalities": [str]},
-      "extensions": [int]           # envelope types this agent understands beyond 1-4
+      "extensions": [int],          # envelope types this agent understands beyond 1-4
+      "relay": bool                 # stores and forwards envelopes for others
     }
 
 Capabilities are the skill ids; the beacon's Bloom filter is derived from
@@ -29,6 +30,7 @@ class AgentCard:
     skills: list[dict[str, Any]] = field(default_factory=list)
     llm: dict[str, Any] | None = None
     extensions: list[int] = field(default_factory=list)
+    relay: bool = False  # stores and forwards envelopes for others (§8)
 
     @property
     def capabilities(self) -> list[str]:
@@ -41,6 +43,8 @@ class AgentCard:
             doc["llm"] = _clean(self.llm)
         if self.extensions:
             doc["extensions"] = sorted(set(self.extensions))
+        if self.relay:
+            doc["relay"] = True
         return doc
 
     @classmethod
@@ -60,6 +64,7 @@ class AgentCard:
             skills=skills,
             llm=doc.get("llm") or None,
             extensions=extensions,
+            relay=bool(doc.get("relay", False)),
         )
 
 

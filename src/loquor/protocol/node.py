@@ -58,6 +58,8 @@ wire = logging.getLogger("loquor.wire")
 
 MessageHandler = Callable[[Peer, dict[str, Any]], Awaitable[None]]
 TypeHandler = Callable[[Envelope, Peer, Address], Awaitable[None]]
+PeerHandler = Callable[[Peer], Awaitable[None]]
+OverheardHandler = Callable[[Envelope], None]
 
 
 class Node:
@@ -86,6 +88,8 @@ class Node:
 
         self._message_handlers: list[MessageHandler] = []
         self._type_handlers: dict[int, TypeHandler] = {}
+        self._peer_handlers: list[PeerHandler] = []
+        self._overheard_handlers: list[OverheardHandler] = []
         self._acks: dict[bytes, asyncio.Future[None]] = {}
         self._hello_at: dict[bytes, float] = {}  # prefix -> when we last HELLO'd it
         self._initiated: set[bytes] = set()  # agent ids we HELLO'd first (for silent nodes)
@@ -112,6 +116,14 @@ class Node:
         self._type_handlers[type_] = handler
         if type_ not in self.card.extensions:
             self.card.extensions.append(type_)
+
+    def on_peer(self, handler: PeerHandler) -> None:
+        """Called with the peer after every HELLO / HELLO_ACK (trust, relay)."""
+        self._peer_handlers.append(handler)
+
+    def on_overheard(self, handler: OverheardHandler) -> None:
+        """Called with valid-looking envelopes addressed to someone else (relays)."""
+        self._overheard_handlers.append(handler)
 
     def update_card(self, card: AgentCard) -> None:
         """Change capabilities; the next beacon carries a new seq."""
@@ -213,6 +225,8 @@ class Node:
             return
         if not env.is_broadcast and env.to != self.agent_id:
             _log_wire("RECV", env, len(data), self, "not for me")
+            for handler in self._overheard_handlers:
+                handler(env)
             return
         _log_wire("RECV", env, len(data), self)
         self._spawn(self._dispatch(env, address))
@@ -278,6 +292,8 @@ class Node:
         if new:
             log.info("%s met %s: %s %s", self.label, peer.label, peer.description, peer.capabilities)
         self.peer_heard.set()
+        for handler in self._peer_handlers:
+            await handler(peer)
         if not ack:
             await self.hello(peer, ack=True)
 
