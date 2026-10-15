@@ -15,71 +15,58 @@ Independent AI-powered devices should be able to:
 
 This is different from asking a cloud chatbot a question: two independent intelligences with *separate* knowledge perform a *coordinated* task, entirely at the edge. See [docs/VISION.md](docs/VISION.md) for the full concept and [docs/POC_PLAN.md](docs/POC_PLAN.md) for the proof-of-concept plan this repository implements.
 
-## What's here now (PoC v0.1)
+## The loquor agent
 
-A working Python implementation of the first PoC, **"Two Machines, One Problem"**: two independent agents — a *Pump Agent* with live sensor data and an *Inspection Agent* with maintenance history — discover each other on a local network, negotiate over additional evidence, and jointly produce a structured diagnostic recommendation. Either side can disconnect mid-task and the exchange resumes without duplicate results.
+One agent program, configured entirely by a JSON profile: name, description,
+capabilities, a system prompt (its knowledge and behaviour), an optional goal
+and the local model to use. Every agent follows the same
+[broadcast protocol](docs/PROTOCOL.md):
+
+1. **advertises** its unique id and capabilities every 10 seconds,
+2. **listens** to every message on the channel,
+3. **answers** requests addressed to its uid with its local LLM,
+4. if it has a **goal**, reasons about the agents it hears, asks the ones that
+   can help, and acts on the answer.
+
+Transports: `localhost` (separate processes on one machine, no network
+needed) and `wifi` (LAN multicast, across laptops) today; `bluetooth` is
+planned behind the same interface.
 
 ```
 loquor-aac/
-├── docs/                 Idea, PoC plan, architecture
-├── src/loquor/           The library: agent, discovery, transports, messages,
-│                         identity, persistent task store, reasoning backends
-├── examples/
-│   └── two_machines_one_problem/   The PoC demo (two device agents + runner)
-└── tests/                End-to-end and unit tests
-```
-
-The layers are deliberately independent: the agent does not know which transport or discovery mechanism it runs on, so new transports (BLE next) are adapters, not rewrites.
-
-```python
-agent = Agent("pump-01", pairing_secret=secret)
-agent.add_capability("machine_diagnostics", handle_diagnosis)
-agent.on_peer_discovered(handle_peer)
-await agent.start()
-
-peers = await agent.find_peers(capability="maintenance_diagnostics")
-result = await agent.ask(peers[0], "maintenance_diagnostics", data=sensor_observations)
+├── docs/                       Vision, PoC plan, architecture, protocol spec
+├── src/loquor/                 The library and the `loquor` command
+├── examples/weather_and_clothes/   Two agent profiles + how to run them
+└── tests/
 ```
 
 ## Quick start
 
-Requires Python 3.10+.
+You need **Python 3.10+** and [Ollama](https://ollama.com) with a local model.
 
 ```bash
+# 1. Install (once)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -e ".[dev]"
 
-# Full collaborative diagnosis, both agents in one process on loopback:
-cd examples/two_machines_one_problem
-python run_demo.py
+# 2. Get a model (once). The example profiles use llama3.1:8b.
+ollama pull llama3.1:8b
 
-# Test 2 — interrupted collaboration: B disconnects mid-task, then resumes:
-python run_demo.py --interrupt
-
-# Run the test suite:
-python -m pytest
+# 3. Run two agents, each in its own terminal (activate the venv in both)
+loquor run examples/weather_and_clothes/weather_agent.json
+loquor run examples/weather_and_clothes/clothing_agent.json
 ```
 
-### Two real machines
-
-On laptop B (knows the maintenance history):
+Within a few seconds the Clothing Advisor hears the Weather Forecaster,
+decides it needs a forecast, asks for one and prints what to wear tomorrow.
+See [examples/weather_and_clothes](examples/weather_and_clothes/README.md)
+for what to expect, running on two laptops, and writing your own agent.
 
 ```bash
-export LOQUOR_PAIRING_SECRET=<shared-secret>
-python examples/two_machines_one_problem/inspection_agent.py --mdns
+python -m pytest          # run the tests (no model needed)
 ```
-
-On laptop A (detects the anomaly) on the same Wi-Fi — one laptop can host a hotspot for the other; no internet is needed:
-
-```bash
-export LOQUOR_PAIRING_SECRET=<shared-secret>
-python examples/two_machines_one_problem/pump_agent.py --mdns
-# or, where multicast/mDNS is unavailable:
-python examples/two_machines_one_problem/pump_agent.py --peer <laptop-B-ip>:8771
-```
-
-### Local LLM (optional)
-
-If [Ollama](https://ollama.com) is running locally with a small quantized model (e.g. `ollama pull qwen2.5:1.5b`), both agents use it to articulate their reasoning. Without it they fall back to deterministic templates — **protocol state is always controlled by deterministic application logic, never by the model**, so the collaboration works and is testable either way.
 
 ## Status and roadmap
 
@@ -89,8 +76,11 @@ If [Ollama](https://ollama.com) is running locally with a small quantized model 
 - [x] HTTP transport over Wi-Fi/IP behind a transport-agnostic interface
 - [x] Persistent task state (SQLite), idempotent retries, resume after disconnect
 - [x] Local LLM reasoning via Ollama, with deterministic fallback
-- [ ] Test 3 benchmark: A alone vs. B alone vs. A+B on labeled diagnostic cases
-- [ ] BLE transport adapter (second transport; same agent application)
+- [x] Prompt-configured agent with the broadcast protocol (advertise, listen, answer by uid)
+- [x] `localhost` and `wifi` (LAN multicast) transports
+- [ ] Verified two-laptop run over Wi-Fi / hotspot
+- [ ] Test 3 benchmark: A alone vs. B alone vs. A+B on labeled cases
+- [ ] Bluetooth (BLE) transport adapter (same agent, new transport)
 - [ ] UWB / mesh transports, multi-peer collaboration
 - [ ] TLS with pinned credentials; explicit pairing ceremony
 
