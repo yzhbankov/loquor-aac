@@ -6,6 +6,15 @@ Mesh Protocol ([PROTOCOL.md](PROTOCOL.md)). This document is the design:
 the layers, the interfaces that are the whole contract between them, and
 what is deliberately left out.
 
+Where to look for what:
+
+| question | document |
+|---|---|
+| what goes on the wire, byte by byte, with sequence diagrams | [PROTOCOL.md](PROTOCOL.md) |
+| how to run and what the demo shows | [../demo/weather_and_clothes/README.md](../demo/weather_and_clothes/README.md) |
+| how to test, add a skill / transport / extension, conventions | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| why the project exists and the PoC plan | [VISION.md](VISION.md), [POC_PLAN.md](POC_PLAN.md) |
+
 ## Principles
 
 1. **One protocol, many transports.** Identity, envelopes, discovery and
