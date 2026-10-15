@@ -30,8 +30,10 @@ from collections.abc import Iterable
 from typing import Any
 
 from loquor.agent.context import Context
+from loquor.agent.sensors import SensorHub
 from loquor.agent.skill import Skill
 from loquor.agent.tracker import RequestError, RequestTracker
+from loquor.agent.triggers import TriggerHub
 from loquor.extensions.query import QueryExtension
 from loquor.extensions.relay import RelayExtension
 from loquor.extensions.session import SessionExtension
@@ -42,6 +44,8 @@ from loquor.protocol.identity import Identity
 from loquor.protocol.node import Node
 from loquor.protocol.transport import Transport
 from loquor.reasoning.base import Reasoner
+from loquor.sensors.base import Sensor
+from loquor.triggers.base import Trigger
 
 log = logging.getLogger("loquor")
 wire = logging.getLogger("loquor.wire")
@@ -65,6 +69,8 @@ class Agent:
         max_attempts: int = 3,
         pinned_keys: str | None = None,  # path of the level-1 trust store (§9)
         relay: bool = False,  # store and forward for peers out of reach (§8)
+        sensors: Iterable[Sensor] = (),
+        triggers: Iterable[Trigger] = (),
     ):
         self.name = name
         self.description = description
@@ -80,6 +86,17 @@ class Agent:
                 if skill.capability in self._handlers:
                     raise ValueError(f"two skills provide capability {skill.capability!r}")
                 self._handlers[skill.capability] = skill
+
+        self.sensors = SensorHub(sensors)
+        self.triggers = TriggerHub(triggers, reasoner)
+        for skill in self.skills:  # a skill naming something the agent lacks fails now, not at runtime
+            for kind, hub in (("sensor", self.sensors), ("trigger", self.triggers)):
+                missing = [n for n in getattr(skill, f"{kind}s", ()) if n not in hub]
+                if missing:
+                    raise ValueError(
+                        f"skill {type(skill).__name__} uses {kind}s {missing} the agent does not have "
+                        f"(have: {hub.names() or 'none'})"
+                    )
 
         self.node = Node(self.identity, transport, self.card(), visibility=visibility,
                          beacon_interval=beacon_interval)
@@ -126,6 +143,7 @@ class Agent:
 
     async def start(self) -> None:
         await self.node.start()
+        self.sensors.start(self._spawn)
         for skill in self.skills:
             self._spawn(skill.run(self.context))
 

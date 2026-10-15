@@ -1,10 +1,12 @@
-"""What a skill can use: the reasoner, the peers, and ``ask``."""
+"""What a skill can use: the reasoner, the peers, ``ask``, sensors and triggers."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
+from loquor.agent.sensors import SensorHub
+from loquor.agent.triggers import TriggerHub
 from loquor.protocol.discovery import Peer
 from loquor.reasoning.base import Reasoner
 
@@ -17,8 +19,6 @@ log = logging.getLogger("loquor")
 class Context:
     def __init__(self, agent: Agent):
         self._agent = agent
-        #: Reserved for the sensors layer; empty until it exists.
-        self.sensors: dict[str, Any] = {}
 
     @property
     def uid(self) -> str:
@@ -31,6 +31,16 @@ class Context:
     @property
     def reasoner(self) -> Reasoner:
         return self._agent.reasoner
+
+    @property
+    def sensors(self) -> SensorHub:
+        """This agent's sensors: ``readings()``, ``latest()``, ``read()``, ``describe()``."""
+        return self._agent.sensors
+
+    @property
+    def triggers(self) -> TriggerHub:
+        """This agent's triggers: ``propose()`` (ask the LLM) and ``fire()``."""
+        return self._agent.triggers
 
     def peers(self, capability: str | None = None) -> list[Peer]:
         """Handshaken peers, optionally only those with a capability."""

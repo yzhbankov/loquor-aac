@@ -5,11 +5,14 @@ A skill can do either or both of:
 - **answer** requests for its ``capability`` (``handle``). The capability is
   advertised in the agent's capability document, and requests naming it are
   dispatched here.
-- **act** on its own (``run``): a background loop that watches peers and
-  asks them things. A skill with no capability only runs.
+- **act** on its own (``run``): a background loop that watches sensors or
+  peers and fires triggers or asks questions. A skill with no capability
+  only runs.
 
 Both receive a :class:`~loquor.agent.context.Context`: the reasoner, the
-peers heard so far, and ``ask()``.
+peers, ``ask()``, and the agent's sensors and triggers. A skill names the
+sensors and triggers it uses in ``sensors`` / ``triggers``; the agent checks
+at startup that they exist.
 """
 
 from __future__ import annotations
@@ -31,6 +34,9 @@ class Skill:
     output_schema: dict[str, Any] | None = None
     #: Minimum trust level a requester needs (AMP §9); enforced at dispatch.
     min_trust: int = 0
+    #: Sensors and triggers this skill uses, by name; checked at startup.
+    sensors: tuple[str, ...] = ()
+    triggers: tuple[str, ...] = ()
 
     async def handle(self, input: dict[str, Any], ctx: Context) -> dict[str, Any]:
         """Answer one request. Raise to send the requester an error."""
@@ -47,3 +53,10 @@ def fill_placeholders(prompt: str) -> str:
     likely answer), so a prompt that must vary can take entropy from here.
     """
     return prompt.replace("{random_number}", str(random.randint(0, 100)))
+
+
+def with_sensors(prompt: str, readings_text: str) -> str:
+    """Put sensor readings into a prompt: at ``{sensors}`` if present, else appended."""
+    if "{sensors}" in prompt:
+        return prompt.replace("{sensors}", readings_text)
+    return f"{prompt}\n\nCurrent sensor readings:\n{readings_text}"

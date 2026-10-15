@@ -36,18 +36,21 @@ Where to look for what:
 ```
  profile.json
       │
-┌─────▼──────────────────────────────────────────────────────────────┐
-│ agent  — orchestrator (no business logic)                          │
-│   capability dispatch · RequestTracker · trust check               │
-│   skills/  llm_answer · goal · <yours>            ← business logic │
-│            each gets a Context: reasoner, peers, ask(), query()    │
-└──────┬───────────────────────────────┬──────────────────┬──────────┘
-       │                               │                  │
-┌──────▼───────────────┐   ┌───────────▼──────┐   ┌───────▼──────┐
-│ extensions           │   │ reasoning        │   │ sensors      │ (later)
-│ query · session      │   │ Reasoner         │   │ Sensor       │
-│ relay · trust        │   │ ollama · template│   │              │
-└──────┬───────────────┘   └──────────────────┘   └──────────────┘
+┌─────▼─────────────────────────────────────────────────────────────────────┐
+│ agent  — orchestrator (no business logic)                                  │
+│   capability dispatch · RequestTracker · trust check                       │
+│   SensorHub (latest readings)      TriggerHub (propose → validate → fire)  │
+│   skills/  llm_answer · goal · sensor_report · <yours>    ← business logic │
+│            each gets a Context: reasoner, peers, ask(), sensors, triggers  │
+└──────┬──────────────────┬──────────────────┬─────────────────┬────────────┘
+       │                  │                  │                 │
+┌──────▼───────────┐ ┌────▼─────────┐ ┌──────▼───────┐ ┌───────▼────────┐
+│ extensions       │ │ reasoning    │ │ sensors      │ │ triggers       │
+│ query · session  │ │ Reasoner     │ │ Sensor       │ │ Trigger        │
+│ relay · trust    │ │ ollama ·     │ │ simulated ·  │ │ console ·      │
+│                  │ │ template     │ │ command ·    │ │ command ·      │
+│                  │ │              │ │ <your driver>│ │ <your driver>  │
+└──────┬───────────┘ └──────────────┘ └──────────────┘ └────────────────┘
 ┌──────▼───────────────────────────────────────┐
 │ protocol  (AMP v1 core)                      │
 │ identity · envelope · discovery · card       │

@@ -1,3 +1,4 @@
 aiohttp>=3.9
 cbor2>=5.6
+jsonschema>=4.17
 pynacl>=1.5

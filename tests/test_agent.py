@@ -9,7 +9,9 @@ from loquor.agent import Agent, RequestError, RequestTracker, Skill
 from loquor.agent.skills import Goal, LlmAnswer
 from loquor.protocol import Identity, Trust
 from loquor.reasoning import Reasoner
+from loquor.sensors import FunctionSensor, Reading
 from loquor.transports import MemoryHub, make_transport
+from loquor.triggers import Trigger
 
 WEATHER_PROMPT = "You forecast the weather. Random number: {random_number}"
 CLOTHES_PROMPT = "You recommend clothes."
@@ -26,6 +28,8 @@ class ScriptedReasoner(Reasoner):
 
     async def complete(self, system, prompt, *, temperature=None, schema=None):
         self.calls.append(prompt)
+        if "Available triggers" in prompt:  # trigger proposal (goal with triggers)
+            return json.dumps({"trigger": "show", "input": {"text": "Wear a coat."}, "reason": "show the person"})
         if schema is not None:  # decision about a peer
             useful = "weather" in prompt.lower()
             return json.dumps({
@@ -61,6 +65,19 @@ class Private(Skill):
 
     async def handle(self, input, ctx):
         return {"secret": 42}
+
+
+class Recording(Trigger):
+    name = "show"
+    description = "Show text."
+    input_schema = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+
+    def __init__(self):
+        self.fired = []
+
+    async def fire(self, input):
+        self.fired.append(input)
+        return {"ok": True}
 
 
 def weather_skills():
@@ -249,3 +266,66 @@ async def test_over_localhost_multicast():
     finally:
         await stopped(clothing, weather)
     assert goal.result["asked"]["uid"] == weather.agent_id.hex()
+
+
+# ------------------------------------------------------- sensors and triggers
+
+
+async def test_llm_answer_grounds_the_prompt_in_sensor_readings():
+    hub = MemoryHub()
+    reasoner = ScriptedReasoner()
+    thermo = FunctionSensor(lambda: Reading("thermometer", 3, "°C"), name="thermometer")
+    server = make("Station", [LlmAnswer("weather_forecast", "Readings:\n{sensors}\nForecast.", sensors=["thermometer"])],
+                  hub.transport(), reasoner=reasoner, sensors=[thermo])
+    client = make("Client", [], hub.transport())
+    await running(server, client)
+    try:
+        peer = await peer_of(client, server)
+        out = await client.ask(peer, "weather_forecast", {"question": "Weather?"})
+        assert "snowy" in out["answer"]
+        # The reading was read on demand and placed at {sensors} in the system prompt.
+        assert server.sensors.latest("thermometer").value == 3
+        # sensor_report exposes it on the mesh, structured.
+    finally:
+        await stopped(client, server)
+    assert reasoner.calls and "asks:" in reasoner.calls[-1]
+
+
+async def test_sensor_report_answers_with_structured_readings():
+    hub = MemoryHub()
+    from loquor.agent.skills import SensorReport
+    server = make("Station", [SensorReport()], hub.transport(),
+                  sensors=[FunctionSensor(lambda: 21.5, name="temp", unit="°C")])
+    client = make("Client", [], hub.transport())
+    await running(server, client)
+    try:
+        peer = await peer_of(client, server)
+        out = await client.ask(peer, "sensor_report", {"sensor": "temp"})
+        assert out["readings"]["temp"]["value"] == 21.5 and out["readings"]["temp"]["unit"] == "°C"
+        with pytest.raises(RequestError, match="no such sensor"):
+            await client.ask(peer, "sensor_report", {"sensor": "nope"})
+    finally:
+        await stopped(client, server)
+
+
+async def test_goal_fires_a_validated_trigger_with_its_conclusion():
+    hub = MemoryHub()
+    show = Recording()
+    weather = make("Weather Forecaster", weather_skills(), hub.transport())
+    clothing = make("Clothing Advisor", [Goal(GOAL, CLOTHES_PROMPT, triggers=["show"])], hub.transport(),
+                    triggers=[show])
+    goal = goal_of(clothing)
+    await running(weather, clothing)
+    try:
+        await asyncio.wait_for(goal.done.wait(), 2)
+    finally:
+        await stopped(clothing, weather)
+    assert show.fired == [{"text": "Wear a coat."}]
+    assert goal.result["triggered"] == {"trigger": "show", "input": {"text": "Wear a coat."}, "result": {"ok": True}}
+
+
+def test_skill_naming_a_missing_sensor_or_trigger_fails_at_startup():
+    with pytest.raises(ValueError, match=r"uses sensors \['thermometer'\]"):
+        make("S", [LlmAnswer("c", "p", sensors=["thermometer"])], MemoryHub().transport())
+    with pytest.raises(ValueError, match=r"uses triggers \['show'\]"):
+        make("S", [Goal(GOAL, CLOTHES_PROMPT, triggers=["show"])], MemoryHub().transport())

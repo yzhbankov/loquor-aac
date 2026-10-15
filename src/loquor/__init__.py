@@ -10,6 +10,8 @@ transport, exchange signed and encrypted messages (AMP v1), and collaborate
 from loquor.agent import Agent, Context, RequestError, Skill
 from loquor.protocol import Envelope, Identity, Peer, Transport, Trust, Visibility
 from loquor.reasoning import Reasoner
+from loquor.sensors import Reading, Sensor
+from loquor.triggers import Trigger, TriggerError
 
 __version__ = "0.4.0"
 
@@ -19,10 +21,14 @@ __all__ = [
     "Envelope",
     "Identity",
     "Peer",
+    "Reading",
     "Reasoner",
+    "Sensor",
     "RequestError",
     "Skill",
     "Transport",
+    "Trigger",
+    "TriggerError",
     "Trust",
     "Visibility",
     "__version__",

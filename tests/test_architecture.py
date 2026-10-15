@@ -4,6 +4,7 @@
 - ``transports`` implement the protocol's transport port and import nothing else.
 - ``reasoning`` imports nothing but itself.
 - ``extensions`` build on ``protocol`` only.
+- ``sensors`` and ``triggers`` are drivers: they import nothing but themselves.
 - nothing below ``agent`` imports ``agent``.
 """
 
@@ -16,6 +17,8 @@ ALLOWED = {
     "transports": {"transports", "protocol"},
     "reasoning": {"reasoning"},
     "extensions": {"extensions", "protocol"},
+    "sensors": {"sensors"},
+    "triggers": {"triggers"},
 }
 IMPORT = re.compile(r"^\s*(?:from|import)\s+loquor\.(\w+)", re.MULTILINE)
 
