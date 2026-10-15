@@ -12,7 +12,7 @@ An agent is one process with:
 |---|---|
 | **uid** | unique id, generated at start: `<slug-of-name>-<8 hex>` (e.g. `weather-forecaster-1e0c7f69`) |
 | **profile** | JSON file defining what the agent is and how it behaves (§5) |
-| **reasoner** | a local LLM (Ollama) driven by the profile's `system_prompt` |
+| **reasoner** | a local LLM (embedded llama.cpp engine) driven by the profile's `system_prompt` |
 | **directory** | the agents it has heard recently (uid → name, description, capabilities) |
 
 Every agent runs the same rules (§3); only the profile differs.
@@ -134,7 +134,7 @@ switch painless.
   "system_prompt": "You are the Weather Forecaster agent… random number: {random_number} …",
   "goal": null,
   "temperature": 1.0,
-  "model": "llama3.1:8b"
+  "model": "qwen2.5-3b"
 }
 ```
 
@@ -146,7 +146,7 @@ switch painless.
 | `system_prompt` | ✅ | knowledge and behaviour; guides answers and decisions |
 | `goal` | | what this agent tries to achieve; `null` = only advertise and answer |
 | `temperature` | | LLM temperature for answers (default 0.2; decisions always use 0) |
-| `model` | | Ollama model (default `LOQUOR_MODEL` or `qwen2.5:1.5b`) |
+| `model` | | model name from `loquor model list`, or a path to a `.gguf` file (default `qwen2.5-3b`) |
 
 `{random_number}` in `system_prompt` is replaced with a fresh 0–100 integer on
 every request. LLMs are poor random generators, so use it when answers must

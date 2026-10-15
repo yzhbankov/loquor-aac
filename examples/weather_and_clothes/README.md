@@ -21,42 +21,53 @@ clothing   🧠 "light sweater, trousers, light jacket"   → prints the result
 
 ## 1. Set up (once)
 
-From the repository root:
+**Install loquor.** Nothing else is needed: no Python, no Ollama. The
+program, its libraries and the LLM engine are all in one package for macOS or
+Linux, on ARM or x86.
 
 ```bash
-python3 -m venv .venv                 # Python 3.10+ (macOS `python` may be 2.7)
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .                      # installs the `loquor` command
-ollama pull llama3.1:8b               # the model both profiles use
+# from a release (downloads the build for this OS/CPU):
+curl -fsSL https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/packaging/install.sh | sh
+
+# or from a package file you were given or built yourself:
+sh packaging/install.sh loquor-macos-arm64.tar.gz
 ```
 
-Ollama must be running (the Ollama app, or `ollama serve`).
+**Install the model** (Qwen2.5 3B, 2.1 GB), once per machine:
+
+```bash
+loquor model pull                     # needs internet once; resumes if interrupted
+# or, on a machine that is never online, copy the .gguf file over and:
+loquor model import qwen2.5-3b-instruct-q4_k_m.gguf
+```
+
+Without either step, the first `loquor run` downloads the model itself.
 
 ## 2. Run on one machine
 
-Open two terminals. In each one, `cd` to the repository root and run
-`source .venv/bin/activate`, then:
+Copy the two profiles to the machine (they are plain JSON files), then open
+two terminals:
 
 ```bash
 # terminal 1
-loquor run examples/weather_and_clothes/weather_agent.json
-
+loquor run weather_agent.json
 # terminal 2
-loquor run examples/weather_and_clothes/clothing_agent.json
+loquor run clothing_agent.json
 ```
 
-Start them in any order. Within about 15 seconds terminal 2 shows (an agent is heard at its next advert, up to 10 s):
+Each agent starts its own copy of the model (about 5 s, about 2.5 GB of
+memory each). Start them in any order. Within about 15 seconds terminal 2
+shows the following (an agent is heard at its next advert, up to 10 s later):
 
 ```
-clothing-advisor-53861aca heard advert from weather-forecaster-b5736995: I am a weather forecaster ...
-clothing-advisor-53861aca reasoning about weather-forecaster-b5736995: useful=True — The Weather Forecaster agent can provide the weather forecast ...
-clothing-advisor-53861aca -> weather-forecaster-b5736995 request: What is the weather forecast for tomorrow?
-clothing-advisor-53861aca <- weather-forecaster-b5736995 response: ... 12 degrees Celsius, and partly cloudy ...
+clothing-advisor-12a40073 heard advert from weather-forecaster-1a58e8d8: I am a weather forecaster ...
+clothing-advisor-12a40073 reasoning about weather-forecaster-1a58e8d8: useful=True — The Weather Forecaster can provide the necessary weather forecast ...
+SEND  request  clothing-advisor-12a40073 -> weather-forecaster-1a58e8d8  [...] {"question": "Could you provide me with a weather forecast for tomorrow ...?"}
+RECV  response weather-forecaster-1a58e8d8 -> clothing-advisor-12a40073  [...] {"answer": "Tomorrow, the temperature will be 12 degrees Celsius with partly cloudy skies."}
 
 === Goal complete ===
 ...
-outcome   : ... I recommend wearing a lightweight, water-repellent jacket ...
+outcome   : ... I recommend wearing a light sweater or a jacket along with light pants or jeans ...
 ```
 
 Terminal 1 shows the same request arriving and the forecast it sent back.
@@ -83,22 +94,23 @@ Every agent sends an advert every 10 s, and these fill the log. Use
 `--wire no-adverts` to hide them, `--wire off` to hide the whole message
 log, or `-v` to also see duplicate deliveries.
 
-Use a different model: `loquor run <profile> --model gemma3:1b` (it works,
-but its answers are less consistent than `llama3.1:8b`'s).
+Use a different model: `loquor run <profile> --model <name or file.gguf>`
+(see `loquor model list`). If you have Ollama and want to use its models,
+add `--engine ollama --model llama3.1:8b`.
 
 ## 3. Run on two laptops (Wi-Fi)
 
 Put both laptops on the same Wi-Fi network, or one laptop's hotspot (no
-internet needed). Set up each one as in step 1, then:
+internet needed). Set up each one as in step 1 and copy the profile to it, then:
 
 ```bash
 # both laptops: the same secret
 export LOQUOR_PAIRING_SECRET=<same-on-both>
 
 # laptop A
-loquor run examples/weather_and_clothes/weather_agent.json --transport wifi
+loquor run weather_agent.json --transport wifi
 # laptop B
-loquor run examples/weather_and_clothes/clothing_agent.json --transport wifi
+loquor run clothing_agent.json --transport wifi
 ```
 
 - If a laptop has several network interfaces, add `--interface <its Wi-Fi IP>`.
@@ -116,7 +128,7 @@ Copy a profile and edit it:
   "system_prompt": "Who you are, what you know, how you answer.",
   "goal": null,
   "temperature": 0.2,
-  "model": "llama3.1:8b"
+  "model": "qwen2.5-3b"
 }
 ```
 
@@ -128,7 +140,9 @@ Copy a profile and edit it:
 
 | Message | Fix |
 |---|---|
-| `model 'llama3.1:8b' is not available` | start Ollama and run `ollama pull llama3.1:8b`, or use `--model <one you have>` |
+| `model 'qwen2.5-3b' is not installed yet` | `loquor model pull` (online) or `loquor model import <file.gguf>` (offline) |
+| `llama-server exited at startup` | see the engine log under `~/.loquor/logs/`; often not enough memory for the model |
+| macOS: "cannot be opened because the developer cannot be verified" | the package was downloaded by a browser: `xattr -dr com.apple.quarantine ~/.local/share/loquor` (install.sh does this) |
 | `invalid profile ...: unknown fields [...]` | typo in a profile field name |
 | `no LAN interface found for wifi transport` | join a Wi-Fi network or hotspot, or pass `--interface` |
 | agents never hear each other | same `--transport` and same `LOQUOR_PAIRING_SECRET` on both |

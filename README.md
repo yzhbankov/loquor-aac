@@ -42,31 +42,32 @@ loquor-aac/
 
 ## Quick start
 
-You need **Python 3.10+** and [Ollama](https://ollama.com) with a local model.
+`loquor` ships as one self-contained package for macOS and Linux, on ARM or
+x86. Python, its libraries and the LLM engine (llama.cpp) are inside, so
+nothing else has to be installed.
 
 ```bash
-# 1. Install (once)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e ".[dev]"
-
-# 2. Get a model (once). The example profiles use llama3.1:8b.
-ollama pull llama3.1:8b
-
-# 3. Run two agents, each in its own terminal (activate the venv in both)
-loquor run examples/weather_and_clothes/weather_agent.json
-loquor run examples/weather_and_clothes/clothing_agent.json
+curl -fsSL https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/packaging/install.sh | sh
+loquor model pull                                         # once: Qwen2.5 3B, 2.1 GB
+loquor run examples/weather_and_clothes/weather_agent.json    # terminal 1
+loquor run examples/weather_and_clothes/clothing_agent.json   # terminal 2
 ```
 
 Within a few seconds the Clothing Advisor hears the Weather Forecaster,
 decides it needs a forecast, asks for one and prints what to wear tomorrow.
 See [examples/weather_and_clothes](examples/weather_and_clothes/README.md)
-for what to expect, running on two laptops, and writing your own agent.
+for what to expect, offline machines, two laptops, and writing your own agent.
+
+### Development
 
 ```bash
-python -m pytest          # run the tests (no model needed)
+python3 -m venv .venv && source .venv/bin/activate    # Python 3.10+
+pip install -e ".[dev]"
+python -m pytest                                      # no model needed
+brew install llama.cpp      # or set LOQUOR_LLAMA_SERVER, to run agents from source
 ```
+
+Building the package: see [packaging/README.md](packaging/README.md).
 
 ## Status and roadmap
 
@@ -78,6 +79,8 @@ python -m pytest          # run the tests (no model needed)
 - [x] Local LLM reasoning via Ollama, with deterministic fallback
 - [x] Prompt-configured agent with the broadcast protocol (advertise, listen, answer by uid)
 - [x] `localhost` and `wifi` (LAN multicast) transports
+- [x] Self-contained package with embedded llama.cpp engine (macOS arm64 built and tested)
+- [ ] CI release builds for macOS x64 and Linux arm64/x64
 - [ ] Verified two-laptop run over Wi-Fi / hotspot
 - [ ] Test 3 benchmark: A alone vs. B alone vs. A+B on labeled cases
 - [ ] Bluetooth (BLE) transport adapter (same agent, new transport)

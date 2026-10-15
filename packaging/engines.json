@@ -1,0 +1,10 @@
+{
+  "llama_cpp_build": "b11320",
+  "url": "https://github.com/ggml-org/llama.cpp/releases/download/{build}/llama-{build}-bin-{asset}.tar.gz",
+  "platforms": {
+    "macos-arm64": {"asset": "macos-arm64",  "sha256": "f6f337fc7d2ff9260f53177cf4fe6bbf6b0f7faa75a49fb224aaf66885a5c956"},
+    "macos-x64":   {"asset": "macos-x64",    "sha256": "ca6d7198ac258466ec109ef81fd0700467758218a74a4736936876c56e7ff1d1"},
+    "linux-arm64": {"asset": "ubuntu-arm64", "sha256": "88589b963d8e2ffd2d4df2f542ed7e301fb636b637c99081f5d58646aee20a9a"},
+    "linux-x64":   {"asset": "ubuntu-x64",   "sha256": "ef1856938dc1434138ce53688791eb0d2d64cf46e309a0942a12bba3366c0919"}
+  }
+}
