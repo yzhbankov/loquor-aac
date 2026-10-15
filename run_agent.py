@@ -1,7 +1,7 @@
 """Run one loquor agent straight from the source tree, no install needed.
 
     pip install -r requirements.txt
-    python run_agent.py examples/weather_and_clothes/weather_agent.json --transport wifi
+    python run_agent.py demo/weather_and_clothes/weather_agent.json --transport wifi
 """
 
 import sys

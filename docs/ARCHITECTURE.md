@@ -78,7 +78,7 @@ LLM, and — if its profile has a goal — asks the agents that can help.
 The HTTP `Agent` above (point-to-point tasks with persisted state and
 resume) remains in the library; the example uses the broadcast agent.
 
-## The example (`examples/weather_and_clothes/`)
+## The demo (`demo/weather_and_clothes/`)
 
 - `weather_agent.json` — no goal; advertises `weather_forecast` and answers with a random forecast (`{random_number}` in its system prompt).
 - `clothing_agent.json` — goal: recommend what to wear tomorrow; finds the forecaster, asks it, recommends clothes.
