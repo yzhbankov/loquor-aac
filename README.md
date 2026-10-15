@@ -37,6 +37,12 @@ with Python and a local model.
 5. **Skills.** A request names a *capability*; the agent dispatches it to the
    skill that owns it, which may call the local LLM. A skill with a *goal*
    looks at the peers it hears, decides who can help, asks, and acts.
+6. **Sensors and triggers.** A sensor is a driver that produces readings
+   (a thermometer on a UART, a GPIO, a subprocess); a trigger is a driver
+   that performs an action (a relay, a display, a script). The LLM sees the
+   readings and *proposes* a trigger with an input; the agent validates the
+   proposal against the trigger's schema and fires it. Both are optional,
+   both are one class or one function, both are selected in the profile.
 
 The wire protocol is **AMP v1** (Agent Mesh Protocol). Sequence diagrams and
 every byte on the wire: [docs/PROTOCOL.md](docs/PROTOCOL.md). How the code is
@@ -71,9 +77,12 @@ An agent is a JSON profile. Built-in parts are picked by name; your own by
   "name": "Soil Station",
   "description": "I report soil moisture and decide whether to water.",
   "reasoner": { "type": "ollama", "model": "qwen2.5:3b" },
+  "sensors":  [ { "type": "simulated", "name": "soil", "unit": "%", "min": 5, "max": 60, "interval": 30 } ],
+  "triggers": [ { "type": "drivers/relay.py:PumpRelay", "port": "/dev/ttyUSB1" } ],
   "skills": [
-    { "type": "llm_answer", "capability": "soil_report",
-      "system_prompt": "You report soil moisture. Reading: {random_number} %." },
+    { "type": "llm_answer", "capability": "soil_report", "sensors": ["soil"],
+      "system_prompt": "You report soil moisture from your sensor:\n{sensors}" },
+    { "type": "sensor_report" },
     { "type": "my_farm.irrigation:Irrigation" }
   ]
 }
@@ -84,23 +93,37 @@ An agent is a JSON profile. Built-in parts are picked by name; your own by
 from loquor import Skill
 
 class Irrigation(Skill):
-    capability = "irrigation_plan"
+    sensors = ("soil",)                            # checked at startup
+    triggers = ("pump",)
 
     async def run(self, ctx):                      # background loop
         while True:
-            for forecaster in ctx.peers("weather_forecast"):
-                out = await ctx.ask(forecaster, "weather_forecast", {"question": "Rain tomorrow?"})
-                ctx.log("forecast: %s", out["answer"])
+            soil = await ctx.sensors.read("soil")
+            forecast = "unknown"
+            for peer in ctx.peers("weather_forecast"):
+                forecast = (await ctx.ask(peer, "weather_forecast", {"question": "Rain tomorrow?"}))["answer"]
+            proposal = await ctx.triggers.propose(          # the LLM proposes; the schema decides
+                "You run the irrigation.", f"{soil.text()}\nForecast: {forecast}", allowed=["pump"])
+            if proposal:
+                await ctx.triggers.fire(proposal.trigger, proposal.input)
             await ctx.wait_for_peers()
 ```
 
-Profile fields, skill interface and extension points: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+A sensor is a class with `read()`; a trigger is a class with `fire()` and a
+JSON schema for its input. The agent only ever talks to them through that
+contract, so what is behind it — a UART, a GPIO, a subprocess — is the
+driver's business.
+
+Working examples: the demo's [`weather_sensor.py`](demo/weather_and_clothes/weather_sensor.py)
+and [`fancy_print.py`](demo/weather_and_clothes/fancy_print.py); a UART
+thermometer and a serial relay in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md),
+with the rules for writing your own and every profile field.
 
 ## Develop
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest            # 50 tests, no model or network needed, ~3 s
+python -m pytest            # 65 tests, no model or network needed, ~3 s
 ```
 
 Layout, how to add a skill / transport / extension, logging, conventions:
@@ -113,7 +136,9 @@ loquor-aac/
 │   ├── transports/    localhost + wifi (UDP multicast), memory (tests); BLE planned
 │   ├── extensions/    QUERY/OFFER, sessions, relay, trust levels
 │   ├── reasoning/     Reasoner interface: Ollama, template
-│   ├── agent/         orchestrator + skills (llm_answer, goal)
+│   ├── sensors/       Sensor contract: simulated, command; yours
+│   ├── triggers/      Trigger contract: console, command; yours
+│   ├── agent/         orchestrator + skills (llm_answer, goal, sensor_report)
 │   ├── config.py      profile JSON → objects
 │   └── cli.py
 ├── run_agent.py       run one agent from a profile
@@ -129,7 +154,8 @@ loquor-aac/
 | AMP v1 core: persisted identity, signed CBOR envelopes, beacons, HELLO handshake, encryption, ACK, visibility | Bluetooth transport (beacons as advertisements, envelopes over GATT/L2CAP) |
 | Extensions: QUERY/OFFER, session negotiation, relay store-and-forward, trust levels with pinned keys | Session transports (TCP on Wi-Fi, BLE L2CAP); relay gossip message |
 | `localhost` and `wifi` transports; agent with skills, trust enforcement, idempotent answers | Pairing ceremony (QR / fingerprint) to pin keys from the CLI |
-| Demo verified on one computer over Wi-Fi multicast | Two-device run; UWB proximity; sensors layer |
+| Sensors and triggers: driver contracts, LLM proposals validated by JSON schema, `sensor_report` on the mesh | A watch skill: readings → LLM → trigger on a timer, no peer needed |
+| Demo verified on one computer over Wi-Fi multicast | Two-device run; UWB proximity |
 
 Why this exists and where it is going: [docs/VISION.md](docs/VISION.md),
 [docs/POC_PLAN.md](docs/POC_PLAN.md).

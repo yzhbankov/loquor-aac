@@ -28,26 +28,32 @@ Where to look for what:
    reasoner; no agent or LLM logic leaks into protocol code.
 4. **Extend by adding a file, configure by editing JSON.** A skill, reasoner
    or transport is one class selected by `"type": "module:Class"`.
-5. **Build a layer when a demo needs it.** Sensors come with the first
-   sensor demo.
+5. **Sensors in, triggers out, LLM in between — never in control.** A
+   sensor is a driver that produces readings; a trigger is a driver that
+   performs an action. The LLM reads readings and *proposes* a trigger with
+   an input; deterministic code validates the proposal against the trigger's
+   schema before anything fires.
 
 ## Layers
 
 ```
  profile.json
       │
-┌─────▼──────────────────────────────────────────────────────────────┐
-│ agent  — orchestrator (no business logic)                          │
-│   capability dispatch · RequestTracker · trust check               │
-│   skills/  llm_answer · goal · <yours>            ← business logic │
-│            each gets a Context: reasoner, peers, ask(), query()    │
-└──────┬───────────────────────────────┬──────────────────┬──────────┘
-       │                               │                  │
-┌──────▼───────────────┐   ┌───────────▼──────┐   ┌───────▼──────┐
-│ extensions           │   │ reasoning        │   │ sensors      │ (later)
-│ query · session      │   │ Reasoner         │   │ Sensor       │
-│ relay · trust        │   │ ollama · template│   │              │
-└──────┬───────────────┘   └──────────────────┘   └──────────────┘
+┌─────▼─────────────────────────────────────────────────────────────────────┐
+│ agent  — orchestrator (no business logic)                                  │
+│   capability dispatch · RequestTracker · trust check                       │
+│   SensorHub (latest readings)      TriggerHub (propose → validate → fire)  │
+│   skills/  llm_answer · goal · sensor_report · <yours>    ← business logic │
+│            each gets a Context: reasoner, peers, ask(), sensors, triggers  │
+└──────┬──────────────────┬──────────────────┬─────────────────┬────────────┘
+       │                  │                  │                 │
+┌──────▼───────────┐ ┌────▼─────────┐ ┌──────▼───────┐ ┌───────▼────────┐
+│ extensions       │ │ reasoning    │ │ sensors      │ │ triggers       │
+│ query · session  │ │ Reasoner     │ │ Sensor       │ │ Trigger        │
+│ relay · trust    │ │ ollama ·     │ │ simulated ·  │ │ console ·      │
+│                  │ │ template     │ │ command ·    │ │ command ·      │
+│                  │ │              │ │ <your driver>│ │ <your driver>  │
+└──────┬───────────┘ └──────────────┘ └──────────────┘ └────────────────┘
 ┌──────▼───────────────────────────────────────┐
 │ protocol  (AMP v1 core)                      │
 │ identity · envelope · discovery · card       │
@@ -67,6 +73,7 @@ Where to look for what:
 | `transports` | `protocol` (the transport port) |
 | `reasoning` | only itself |
 | `extensions` | `protocol` |
+| `sensors`, `triggers` | only themselves — drivers know nothing about agents, peers or LLMs |
 | `agent`, `config`, `cli` | everything |
 
 ```
@@ -75,7 +82,10 @@ src/loquor/
 ├── transports/   multicast.py (localhost, wifi) · memory.py (tests)        (ble.py planned)
 ├── extensions/   query.py · session.py · relay.py · trust.py
 ├── reasoning/    base.py · ollama.py · template.py
-├── agent/        agent.py · tracker.py · context.py · skill.py · skills/{llm_answer,goal}.py
+├── sensors/      base.py (Sensor, Reading, FunctionSensor) · builtin.py (simulated, command)
+├── triggers/     base.py (Trigger, FunctionTrigger) · builtin.py (console, command)
+├── agent/        agent.py · tracker.py · context.py · skill.py · sensors.py · triggers.py
+│                 skills/{llm_answer,goal,sensor_report}.py
 ├── config.py     profile JSON → objects ("type" lookup)
 └── cli.py
 run_agent.py · demo/ · tests/ (one file per section + the dependency rule)
@@ -129,6 +139,66 @@ class Reasoner:
                        temperature: float | None = None, schema: dict | None = None) -> str
 ```
 
+### Sensor — `sensors/base.py`
+
+```python
+@dataclass
+class Reading:
+    sensor: str; value: Any; unit: str = ""; at: float; error: str | None = None
+    def text(self) -> str                  # "thermometer: 12.4 °C (3 s ago)" — what the LLM sees
+
+class Sensor:
+    name: str; description: str; unit: str
+    interval: float | None = None          # poll every N s into the store; None = on demand
+    async def read(self) -> Reading        # required; return self.failed(msg) instead of raising
+    async def run(self, publish) -> None   # optional: push loop; default polls read() every interval
+```
+
+### Trigger — `triggers/base.py`
+
+```python
+class Trigger:
+    name: str
+    description: str                       # what it does and when to use it — the LLM reads this
+    input_schema: dict                     # JSON schema; proposals are validated against it
+    async def fire(self, input: dict) -> dict
+```
+
+Both may also be plain functions (`FunctionSensor`, `FunctionTrigger` wrap
+them). Both import nothing but their base module: a UART thermometer and a
+relay over a serial line are written the same way as the demo's random
+weather and terminal card.
+
+### Hubs — `agent/sensors.py`, `agent/triggers.py`
+
+```python
+class SensorHub:                                # ctx.sensors
+    def latest(self, name) -> Reading | None    # from the store, no I/O
+    async def read(self, name) -> Reading       # fresh, also stored
+    async def readings(self, names=None)        # stored for polled sensors, fresh for on-demand
+    def describe(self, readings) -> str         # prompt-ready lines
+
+class TriggerHub:                               # ctx.triggers
+    def describe(self, names=None) -> str       # catalog for the prompt: name, description, schema
+    async def propose(self, system, situation, allowed=None) -> Proposal
+        # asks the reasoner for JSON {trigger ∈ allowed ∪ null, input, reason};
+        # validates input against the trigger's schema; anything off → Proposal(None, reason)
+    async def fire(self, name, input) -> dict   # validates again, runs, logs; TriggerError on failure
+```
+
+The flow every skill with sensors and triggers follows:
+
+```
+sensor.read() ──▶ SensorHub (latest) ──▶ describe() ──▶ LLM prompt
+                                                           │
+LLM JSON {trigger, input, reason} ──▶ TriggerHub.propose() validates ──▶ fire() ──▶ trigger.fire()
+```
+
+Skills that use them: `llm_answer` with `"sensors": [...]` puts the readings
+at `{sensors}` in its prompt; `goal` with `"triggers": [...]` proposes and
+fires one with its conclusion; `sensor_report` answers
+`{"sensor"?}` → `{"readings": {...}}` so peers get numbers, not prose.
+
 ### Skill and Context — `agent/skill.py`, `agent/context.py`
 
 ```python
@@ -138,11 +208,14 @@ class Skill:
     input_schema: dict | None = None     # published in the card
     output_schema: dict | None = None
     min_trust: int = 0                   # enforced at dispatch
+    sensors: tuple[str, ...] = ()        # names it uses; checked at startup
+    triggers: tuple[str, ...] = ()
     async def handle(self, input: dict, ctx: Context) -> dict
     async def run(self, ctx: Context) -> None
 
 class Context:
-    uid, name, reasoner, sensors
+    uid, name, reasoner
+    sensors: SensorHub; triggers: TriggerHub
     def peers(self, capability=None) -> list[Peer]          # handshaken peers
     async def ask(self, peer, capability, input, timeout=None) -> dict
     async def query(self, capability, timeout=1.0) -> list[Peer]   # QUERY/OFFER
@@ -195,16 +268,20 @@ skill A: ctx.ask(peer, "weather_forecast", {"question": ...})
   "relay": false,
   "transport": { "type": "wifi" },
   "reasoner":  { "type": "ollama", "model": "qwen2.5:3b" },
+  "sensors":  [ { "type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5 } ],
+  "triggers": [ { "type": "console", "name": "print" } ],
   "skills": [
-    { "type": "llm_answer", "capability": "weather_forecast", "temperature": 1.0 },
+    { "type": "llm_answer", "capability": "weather_forecast", "sensors": ["weather"] },
+    { "type": "sensor_report" },
     { "type": "my_farm.irrigation:Irrigation" }
   ]
 }
 ```
 
 Every part is `{"type": ..., **constructor kwargs}`; `type` is a built-in
-name or `"module:Class"`. Only `name`, `description` and `skills` are
-required. Command-line `--transport`, `--interface`, `--model` and
+name, `"module:Class"` for an installed module, or `"file.py:Class"` for a
+file next to the profile. Sensors and triggers may be plain functions. Only
+`name`, `description` and `skills` are required. Command-line `--transport`, `--interface`, `--model` and
 `--visibility` override the profile.
 
 ## What is deliberately not here
@@ -215,8 +292,10 @@ required. Command-line `--transport`, `--interface`, `--model` and
   for one run.
 - **No event bus.** Skills call `ctx.ask`; the agent calls `skill.handle`.
 - **No protocol pluggability.** The envelope and its four core types are
-  fixed; the codec is CBOR. Devices speaking industrial protocols belong in
-  the sensors layer, not as peers.
+  fixed; the codec is CBOR. Devices speaking industrial protocols are
+  sensors or triggers of an agent, not peers.
+- **No reading history.** The hub keeps the latest reading per sensor; a
+  time series store is a later implementation behind the same hub.
 
 ## Roadmap
 
@@ -224,4 +303,6 @@ required. Command-line `--transport`, `--interface`, `--model` and
    envelopes over GATT/L2CAP with chunking. Nothing above the transport changes.
 2. **Session transports** — TCP on the same Wi-Fi, then BLE L2CAP.
 3. **Gossip wire message** between relays (type ≥ 16), and UWB proximity.
-4. **Sensors** with the first sensor demo; `Context.sensors` is reserved.
+4. **Watch skill** — "every N seconds, put these readings in front of the
+   LLM, let it pick a trigger": the sensor → LLM → trigger loop with no
+   peer involved. All the parts exist; it is a 30-line skill.

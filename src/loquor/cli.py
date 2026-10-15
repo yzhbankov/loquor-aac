@@ -16,6 +16,7 @@ import asyncio
 import logging
 import signal
 import sys
+from pathlib import Path
 
 from loquor.config import build_agent, load_profile
 from loquor.protocol.discovery import Visibility
@@ -35,6 +36,7 @@ async def run(args: argparse.Namespace) -> None:
 
     agent = build_agent(
         load_profile(args.profile),
+        base_dir=Path(args.profile).resolve().parent,
         transport=args.transport,
         interface=args.interface,
         model=args.model,
