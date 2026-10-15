@@ -28,23 +28,24 @@ the clothes. Stop with Ctrl-C.
 
 ## Run on two machines
 
-Both machines on the same Wi-Fi (or one's hotspot), each set up as above.
-Use the same secret on both:
+Both machines on the same Wi-Fi (or one's hotspot), each set up as above:
 
 ```bash
 # machine A
-export LOQUOR_PAIRING_SECRET=my-secret
 python run_agent.py demo/weather_and_clothes/weather_agent.json --transport wifi
 
 # machine B
-export LOQUOR_PAIRING_SECRET=my-secret
 python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport wifi
 ```
+
+Each agent gets a keypair on first run (`~/.loquor/keys/`), finds the other
+by its beacons, exchanges keys and encrypts everything after that.
 
 ## Options
 
 - `--model llama3.1:8b` — any model from `ollama list`
-- `--wire no-adverts` — quieter log
+- `--wire no-handshake` — hide HELLO/ACK envelopes in the log
+- `--visibility quiet` — never beacon; still answers
 - `--interface <ip>` — pick the network interface for `wifi`
 
 ## Troubleshooting
@@ -53,5 +54,5 @@ python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport wif
 |---|---|
 | `model ... is not available in Ollama` | start Ollama, then `ollama pull <model>` |
 | `ModuleNotFoundError` | activate the venv, `pip install -r requirements.txt` |
-| agents don't hear each other | same `--transport` and same `LOQUOR_PAIRING_SECRET` on both |
+| agents don't hear each other | same `--transport` on both; neither set to `--visibility silent` |
 | two machines still silent | guest/corporate Wi-Fi blocks devices; use a phone hotspot |

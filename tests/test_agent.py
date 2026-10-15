@@ -1,24 +1,23 @@
-"""The orchestrator: advertise, track peers, dispatch to skills, ask with retries."""
+"""The orchestrator: dispatch to skills by capability, ask with retries, trust."""
 
 import asyncio
 import json
 
 import pytest
 
-from loquor.agent import Agent, PeerDirectory, RequestError, RequestTracker, Skill
+from loquor.agent import Agent, RequestError, RequestTracker, Skill
 from loquor.agent.skills import Goal, LlmAnswer
-from loquor.protocol import MessageType, decode, request
+from loquor.protocol import Identity, Trust
 from loquor.reasoning import Reasoner
 from loquor.transports import MemoryHub, make_transport
 
-SECRET = "test-pairing-secret"
 WEATHER_PROMPT = "You forecast the weather. Random number: {random_number}"
 CLOTHES_PROMPT = "You recommend clothes."
 GOAL = "Recommend what to wear tomorrow."
 
 
 class ScriptedReasoner(Reasoner):
-    """Stands in for an LLM: decides on adverts, forecasts, recommends."""
+    """Stands in for an LLM: decides on peers, forecasts, recommends."""
 
     name = "scripted"
 
@@ -27,7 +26,7 @@ class ScriptedReasoner(Reasoner):
 
     async def complete(self, system, prompt, *, temperature=None, schema=None):
         self.calls.append(prompt)
-        if schema is not None:  # decision about an advertised agent
+        if schema is not None:  # decision about a peer
             useful = "weather" in prompt.lower()
             return json.dumps({
                 "useful": useful,
@@ -43,6 +42,7 @@ class ScriptedReasoner(Reasoner):
 
 class Echo(Skill):
     capability = "echo"
+    input_schema = {"type": "object"}
 
     async def handle(self, input, ctx):
         return {"echo": input}
@@ -55,6 +55,14 @@ class Broken(Skill):
         raise RuntimeError("kaboom")
 
 
+class Private(Skill):
+    capability = "private"
+    min_trust = Trust.VERIFIED
+
+    async def handle(self, input, ctx):
+        return {"secret": 42}
+
+
 def weather_skills():
     return [LlmAnswer("weather_forecast", WEATHER_PROMPT)]
 
@@ -63,15 +71,15 @@ def clothing_skills():
     return [LlmAnswer("clothing_recommendation", CLOTHES_PROMPT), Goal(GOAL, CLOTHES_PROMPT)]
 
 
-def make(name, skills, transport, reasoner=None, secret=SECRET, **kwargs):
+def make(name, skills, transport, reasoner=None, **kwargs):
     return Agent(
         name=name,
         description=f"I am {name}.",
         skills=skills,
         reasoner=reasoner or ScriptedReasoner(),
         transport=transport,
-        pairing_secret=secret,
-        advert_interval=0.05,
+        identity=Identity.generate(),
+        beacon_interval=0.05,
         request_timeout=1.0,
         **kwargs,
     )
@@ -91,17 +99,16 @@ async def stopped(*agents):
         await agent.stop()
 
 
+async def peer_of(client, server, timeout=1.0):
+    """Wait until ``client`` has handshaken with ``server``; return the Peer."""
+    async def wait():
+        while server.agent_id not in client.node.keys:
+            await asyncio.sleep(0.01)
+    await asyncio.wait_for(wait(), timeout)
+    return client.node.peers.get(server.agent_id)
+
+
 # ------------------------------------------------------------- unit pieces
-
-
-def test_directory_tracks_and_prunes():
-    d = PeerDirectory(ttl=0.0)
-    assert d.update("w-1", "Weather", "I forecast.", ["weather_forecast"], address=1)
-    assert not d.update("w-1", "Weather", "I forecast.", ["weather_forecast"], address=2)
-    assert d.get("w-1").address == 2 and "w-1" in d and len(d) == 1
-    assert [p.uid for p in d.find("weather_forecast")] == ["w-1"]
-    assert d.find("music") == []
-    assert [p.uid for p in d.prune()] == ["w-1"] and len(d) == 0
 
 
 async def test_tracker_outbound_and_cache():
@@ -116,17 +123,29 @@ async def test_tracker_outbound_and_cache():
     t.close("r1"), t.close("r2")
     t.resolve("r1", {})  # unknown ids are ignored
 
-    assert t.begin(("s", "1")) and not t.begin(("s", "1"))
-    reply = request("a", "A", "s", "1", "cap", {})
-    t.finish(("s", "1"), reply)
-    assert t.cached(("s", "1")) is reply and t.begin(("s", "1"))
-    t.finish(("s", "2"), reply)
-    assert t.cached(("s", "1")) is None  # evicted: cache_size=1
+    key = (b"s" * 16, "1")
+    assert t.begin(key) and not t.begin(key)
+    reply = {"kind": "response", "request_id": "1", "output": {}}
+    t.finish(key, reply)
+    assert t.cached(key) is reply and t.begin(key)
+    t.finish((b"s" * 16, "2"), reply)
+    assert t.cached(key) is None  # evicted: cache_size=1
 
 
 def test_duplicate_capabilities_are_rejected():
     with pytest.raises(ValueError, match="two skills"):
         make("X", [Echo(), Echo()], MemoryHub().transport())
+
+
+def test_card_is_built_from_skills_and_reasoner():
+    agent = make("Server", [Echo(), Private()], MemoryHub().transport())
+    agent.reasoner.model = "qwen2.5:3b"
+    doc = agent.card().to_dict()
+    assert doc["name"] == "Server" and doc["llm"] == {"model": "qwen2.5:3b"}
+    assert doc["skills"] == [
+        {"id": "echo", "name": "echo", "input_schema": {"type": "object"}},
+        {"id": "private", "name": "private", "min_trust": 1},
+    ]
 
 
 # ---------------------------------------------------------------- end to end
@@ -144,12 +163,12 @@ async def test_clothing_agent_finds_forecaster_asks_and_acts():
         await stopped(clothing, weather)
 
     assert goal.result["asked"] == {
-        "uid": weather.uid, "name": "Weather Forecaster",
+        "uid": weather.agent_id.hex(), "name": "Weather Forecaster",
         "capability": "weather_forecast", "question": "What is the weather tomorrow?",
     }
     assert "snowy" in goal.result["answer"]
     assert "coat" in goal.result["outcome"]
-    assert clothing.uid in weather.directory and weather.uid in clothing.directory
+    assert clothing.agent_id in weather.node.peers and weather.agent_id in clothing.node.peers
 
 
 async def test_agent_without_useful_peer_does_nothing():
@@ -160,42 +179,29 @@ async def test_agent_without_useful_peer_does_nothing():
     await asyncio.sleep(0.3)
     await stopped(clothing, music)
     assert not goal_of(clothing).done.is_set()
-    assert music.uid in clothing.directory
+    assert music.agent_id in clothing.node.peers
 
 
 async def test_ask_dispatches_on_capability_and_reports_errors():
     hub = MemoryHub()
-    server = make("Server", [Echo(), Broken()], hub.transport())
+    server = make("Server", [Echo(), Broken(), Private()], hub.transport())
     client = make("Client", [], hub.transport())
     await running(server, client)
     try:
-        await asyncio.sleep(0.1)  # hear the advert
-        peer = client.directory.get(server.uid)
-        assert peer.capabilities == ["echo", "broken"]
+        peer = await peer_of(client, server)
+        assert peer.capabilities == ["echo", "broken", "private"]
         assert await client.ask(peer, "echo", {"n": 1}) == {"echo": {"n": 1}}
         with pytest.raises(RequestError, match="skill_failed: RuntimeError: kaboom"):
             await client.ask(peer, "broken", {})
         with pytest.raises(RequestError, match="no_such_capability"):
             await client.ask(peer, "music", {})
+        # Trust is enforced at dispatch: the client is only "heard" (level 0).
+        with pytest.raises(RequestError, match="insufficient_trust"):
+            await client.ask(peer, "private", {})
+        server.node.peers.get(client.agent_id).trust = Trust.VERIFIED
+        assert await client.ask(peer, "private", {}) == {"secret": 42}
     finally:
         await stopped(client, server)
-
-
-async def test_requests_for_other_uids_are_only_overheard():
-    hub = MemoryHub()
-    reasoner = ScriptedReasoner()
-    weather = make("Weather Forecaster", weather_skills(), hub.transport(), reasoner=reasoner)
-    other = make("Other", [], hub.transport())
-    await running(weather, other)
-    try:
-        # Broadcast a request addressed to somebody else: the forecaster
-        # hears it but must not answer.
-        msg = request(other.uid, "Other", "someone-else", "r1", "weather_forecast", {"question": "?"})
-        await other._send(msg)
-        await asyncio.sleep(0.1)
-        assert not any("asks:" in call for call in reasoner.calls)
-    finally:
-        await stopped(other, weather)
 
 
 async def test_retried_request_gets_the_same_cached_answer():
@@ -203,48 +209,28 @@ async def test_retried_request_gets_the_same_cached_answer():
     reasoner = ScriptedReasoner()
     weather = make("Weather Forecaster", weather_skills(), hub.transport(), reasoner=reasoner)
     asker = make("Asker", [], hub.transport())
-    replies = []
-    hub.taps.append(lambda data: replies.append(decode(data)))
     await running(weather, asker)
     try:
-        await asyncio.sleep(0.1)
-        peer = asker.directory.get(weather.uid)
+        peer = await peer_of(asker, weather)
         first = await asker.ask(peer, "weather_forecast", {"question": "Weather?"})
         # Same request_id again, as a retry after a lost response would be.
-        dup = request(asker.uid, "Asker", weather.uid, "dup", "weather_forecast", {"question": "Weather?"})
-        await asker._send(dup, to=peer.address)
-        await asker._send(dup.model_copy(update={"msg_id": "second-copy"}), to=peer.address)
+        dup = {"kind": "request", "request_id": "dup", "capability": "weather_forecast",
+               "input": {"question": "Weather?"}}
+        replies = []
+        asker.node.on_message(lambda p, body: _append(replies, body))
+        await asker.node.send(peer, dup)
+        await asker.node.send(peer, dup)
         await asyncio.sleep(0.1)
     finally:
         await stopped(asker, weather)
-    answers = [m for m in replies if m.type is MessageType.RESPONSE and m.request_id == "dup"]
+    answers = [b for b in replies if b["kind"] == "response" and b["request_id"] == "dup"]
     assert first["answer"] and len(answers) == 2
-    assert len({m.payload["output"]["answer"] for m in answers}) == 1
+    assert len({b["output"]["answer"] for b in answers}) == 1
     assert sum("asks:" in call for call in reasoner.calls) == 2  # "Weather?" once + "dup" once
 
 
-async def test_unauthenticated_agents_are_ignored():
-    hub = MemoryHub()
-    weather = make("Weather Forecaster", weather_skills(), hub.transport(), secret="other-secret")
-    clothing = make("Clothing Advisor", clothing_skills(), hub.transport())
-    await running(weather, clothing)
-    await asyncio.sleep(0.2)
-    await stopped(clothing, weather)
-    assert weather.uid not in clothing.directory
-    assert not goal_of(clothing).done.is_set()
-
-
-async def test_peers_are_forgotten_when_silent():
-    hub = MemoryHub()
-    weather = make("Weather Forecaster", weather_skills(), hub.transport())
-    watcher = make("Watcher", [], hub.transport())
-    await running(weather, watcher)
-    await asyncio.sleep(0.1)
-    assert weather.uid in watcher.directory
-    await weather.stop()
-    await asyncio.sleep(0.3)  # > 3 advert intervals
-    await watcher.stop()
-    assert weather.uid not in watcher.directory
+async def _append(items, body):
+    items.append(body)
 
 
 async def test_over_localhost_multicast():
@@ -262,4 +248,4 @@ async def test_over_localhost_multicast():
         pytest.skip("multicast packets not delivered in this environment")
     finally:
         await stopped(clothing, weather)
-    assert goal.result["asked"]["uid"] == weather.uid
+    assert goal.result["asked"]["uid"] == weather.agent_id.hex()

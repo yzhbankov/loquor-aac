@@ -1,159 +1,231 @@
-# Loquor protocol — `loquor/1`
+# AMP v1 — Agent Mesh Protocol, as implemented
 
-A protocol for independent agents that share a local channel. There is no
-server and no prior configuration: agents learn about each other only from
-what they hear. The protocol is the same on every transport; a transport only
-moves bytes (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+This document describes exactly what `src/loquor/protocol/` implements.
+Sections marked **(extension)** are optional; **(stub)** means the interface
+exists and the behaviour is minimal. Nothing here depends on a particular
+radio: a transport only carries bytes (§10).
 
-## 1. The agent
+## 1. Identity — `identity.py`
 
-An agent is one process with:
+- Each agent has an **Ed25519 keypair**, generated once and persisted as a
+  32-byte seed file (mode 0600), by default `~/.loquor/keys/<name>.key`.
+- `agent_id` = first 16 bytes of SHA-256(public key).
+- All addressing uses `agent_id`. Transport addresses (IP tuples, BLE
+  handles) are hints for where to send bytes, never identity.
+- The same key, converted to X25519, is used for pairwise encryption (§5).
 
-| | |
-|---|---|
-| **uid** | unique id, generated at start: `<slug-of-name>-<8 hex>` (e.g. `weather-forecaster-1e0c7f69`) |
-| **profile** | JSON file defining what the agent is and which skills it runs (§5) |
-| **skills** | the capabilities it answers for, and the loops it runs |
-| **directory** | the agents it has heard recently (uid → name, description, capabilities, address) |
+## 2. Envelope — `envelope.py`
 
-Every agent runs the same rules (§3); only the profile differs.
+The only mandatory wire unit. A CBOR array in fixed order:
 
-## 2. Messages
-
-All messages are JSON objects with the same envelope:
+```
+[ver, type, msg_id, from, to, ttl, ts, body, sig]
+```
 
 | field | type | meaning |
 |---|---|---|
-| `protocol` | string | `"loquor/1"` |
-| `type` | string | `advert`, `request`, `response` or `error` |
-| `msg_id` | string | unique per message (used to drop duplicate deliveries) |
-| `sender` | string | uid of the sender |
-| `sender_name` | string | human-readable name of the sender |
-| `recipient` | string \| null | uid of the addressee; `null` for adverts (everyone) |
-| `payload` | object | depends on `type` (below) |
-| `sent_at` | number | Unix time, seconds |
-| `signature` | string | HMAC-SHA256 (hex) over the canonical JSON of all other fields |
+| `ver` | uint | `1` |
+| `type` | uint | message type (§4); unknown values decode and are ignored |
+| `msg_id` | 16 bytes | random; receivers drop repeats (LRU of 4096) |
+| `from` | 16 bytes | sender `agent_id` |
+| `to` | 16 bytes | recipient `agent_id`, or 16 zero bytes = broadcast |
+| `ttl` | uint | hop budget; a relay decrements it and drops at 0 (default 4) |
+| `ts` | uint | unix seconds |
+| `body` | bytes | plaintext for HELLO/HELLO_ACK/ACK and extension types; encrypted for MSG |
+| `sig` | 64 bytes | Ed25519 over CBOR `[ver, type, msg_id, from, to, ts, body]` |
 
-Canonical JSON = keys sorted, separators `,` and `:`, UTF-8.
-The HMAC key is the pairing secret shared by the agents (`LOQUOR_PAIRING_SECRET`).
-A message is at most **4096 bytes** encoded, on every transport.
+Rules:
 
-| type | recipient | payload |
-|---|---|---|
-| `advert` | `null` | `{"name", "description", "capabilities": ["tag", ...]}` |
-| `request` | target uid | `{"request_id", "capability", "input": {...}}` |
-| `response` | requester uid | `{"request_id", "output": {...}}` |
-| `error` | requester uid | `{"request_id", "code", "detail"}` |
+- **Maximum encoded size 64 KB**; larger envelopes are neither sent nor decoded.
+- **`ttl` is not signed.** The spec asks both that relays decrement `ttl` and
+  that the signature cover all prior fields; a relay cannot re-sign as the
+  origin, so `ttl` is the one field left out. Every other field is covered.
+- A receiver drops: its own envelopes, repeats, envelopes addressed to another
+  id, invalid signatures, and anything but HELLO/HELLO_ACK from a peer it has
+  not handshaken with.
+- Envelopes are connectionless; no link-level session is required to receive one.
 
-`input` and `output` are structured objects defined by the capability. The
-built-in `llm_answer` skill uses `{"question": str}` → `{"answer": str}`.
+## 3. Discovery — `discovery.py`
 
-Error codes: `no_such_capability` (the agent has no skill for it),
-`skill_failed` (the skill raised or returned something that is not an object),
-`too_large` (the response did not fit the size cap).
+**Beacon** — 16 bytes, sized for a BLE advertisement, sent by *visible*
+agents every `beacon_interval` (default 10 s):
 
-Example — the clothing agent asks the forecaster:
-
-```json
-{
-  "protocol": "loquor/1",
-  "type": "request",
-  "msg_id": "6f1c…",
-  "sender": "clothing-advisor-fb444c02",
-  "sender_name": "Clothing Advisor",
-  "recipient": "weather-forecaster-1e0c7f69",
-  "payload": {
-    "request_id": "a93e…",
-    "capability": "weather_forecast",
-    "input": {"question": "What is the weather forecast for tomorrow?"}
-  },
-  "sent_at": 1760565491.2,
-  "signature": "4be0…"
-}
+```
+"AM" | ver=1 | agent_id[:8] | bloom (4 bytes) | seq (1 byte)
 ```
 
-## 3. Rules every agent follows
+- `bloom`: 32-bit Bloom filter of the agent's capability ids, k = 2, bits
+  `SHA-256(id)[0] % 32` and `SHA-256(id)[1] % 32`. ~5 % false positives at
+  4 capabilities, ~15 % at 8. A hit means "ask"; HELLO is authoritative.
+- `seq`: the capability document's version; bumps on every change. A peer
+  that sees a new `seq` sends HELLO again to refresh the card.
 
-1. **Advertise.** Send an `advert` at start and then every 10 s (configurable
-   with `--advert-interval`). `capabilities` are the capabilities of its skills.
-2. **Listen to everything.** Drop a message if it is not valid JSON of this
-   format, its `protocol` differs, its signature does not verify, its
-   `sender` is this agent, or its `msg_id` was already seen.
-3. **Track peers.** On an `advert`, add or refresh the sender in the
-   directory, with the transport address it came from. Remove a peer after
-   3 missed advert intervals (30 s by default).
-4. **Act only on what is addressed to you.** A `request`, `response` or
-   `error` whose `recipient` is another uid is ignored (overheard).
-5. **Answer requests.** On a `request` for this uid, dispatch `input` to the
-   skill whose capability matches; send its `output` as a `response` with the
-   same `request_id`. No such skill → `error{no_such_capability}`; the skill
-   fails → `error{skill_failed}`.
-6. **Idempotency.** If a `request_id` from the same sender arrives again,
-   resend the cached reply — never run the skill again, never send a
-   different answer. Ignore it while the first copy is still being answered.
-7. **Ask with retries.** A request without a response is resent with the same
-   `request_id` (3 attempts within the request timeout, default 30 s). An
-   `error` ends the wait immediately.
+A beacon is not signed and carries no name; it only says "someone with this
+id prefix may offer these capabilities". On hearing an unknown prefix a node
+broadcasts HELLO (at most once per `beacon_interval` per prefix).
 
-Only the content of answers and decisions comes from skills (and their LLM).
-Message format, addressing, retries, deduplication and peer tracking are fixed
-code — a model cannot break the protocol.
+**Visibility** (per agent, same protocol for all):
 
-## 4. Transports
+| policy | beacons | answers QUERY | answers unsolicited HELLO | initiates |
+|---|---|---|---|---|
+| `visible` | yes | yes | yes | yes |
+| `quiet` | no | yes | yes | yes |
+| `silent` | no | no | no | yes |
 
-The protocol needs two things from a transport: a way to reach everyone in
-range (`broadcast`, for adverts) and a way to reach one peer (`send`, for the
-rest). Agents on different transports do not hear each other.
+A node forgets a peer after 3 beacon intervals without hearing it (beacon,
+HELLO or any valid envelope), and discards the pair key.
 
-| transport | status | channel | reach |
+## 4. Message types — `node.py`
+
+| type | name | core | body |
 |---|---|---|---|
-| `localhost` | implemented | UDP multicast `239.255.76.76:47600` on loopback | processes on one machine; no network needed |
-| `wifi` | implemented, two-laptop run pending | same multicast group on the LAN interface, TTL 1 | machines on one Wi-Fi, hotspot or wired LAN |
-| `bluetooth` | planned | BLE connections, chunked to the MTU | devices in radio range, no Wi-Fi |
+| 1 | `HELLO` | ✅ | CBOR `{pk: 32B, card: {...}, seq: uint, ext: [uint]}` — plaintext |
+| 2 | `HELLO_ACK` | ✅ | same + `chosen: [uint]` (extension intersection) — plaintext |
+| 3 | `MSG` | ✅ | application payload, encrypted (§5) |
+| 4 | `ACK` | ✅ | the acknowledged `msg_id` (16 bytes) — plaintext, unicast |
+| 5 | `QUERY` | extension | CBOR `{capability: str, nonce: 8B}` — broadcast, plaintext |
+| 6 | `OFFER` | extension | CBOR `{capability: str, nonce: 8B}` — unicast reply, plaintext |
+| 7 | `SESSION_REQ` | extension | CBOR `{purpose: str, hint: str, nonce: 8B}` — unicast, plaintext |
+| 8 | `SESSION_ACK` | extension | CBOR `{nonce: 8B, transport: str, params: {...}}` — unicast, plaintext |
+| 16+ | reserved | | decoded, ignored |
 
-**Wi-Fi notes.** Some networks block multicast between clients ("client
-isolation": guest, corporate and some public Wi-Fi). For demos, use a hotspot
-or a home router. Both machines need the same `LOQUOR_PAIRING_SECRET`.
+Handshake:
 
-## 5. Profile
+1. A receives HELLO from B: checks `SHA-256(pk)[:16] == from`, verifies the
+   signature with `pk`, validates the card; stores B at trust level 0; derives
+   the pair key; replies HELLO_ACK unicast.
+2. B receives HELLO_ACK: same checks; stores A; derives the same key.
 
-```json
+Both directions may start at once (both heard each other's beacon); a HELLO
+from an already-known peer simply refreshes it and is acknowledged again.
+
+Every unicast MSG is acknowledged with ACK. A sender may wait for the ACK
+(`Node.send(..., wait_ack=True)`); the agent layer's request/response retry
+does not depend on it.
+
+Unknown types from handshaken peers are ignored with a debug log; the node
+keeps working. Extensions register a handler per type (`Node.register`).
+
+**QUERY / OFFER — `extensions/query.py`.** "Who offers capability X?"
+A node broadcasts QUERY; every handshaken `visible` or `quiet` node whose
+card lists the capability replies OFFER with the same nonce. The asker
+collects OFFERs for a timeout (default 1 s) and adds the peers it already
+knew to have the capability. The beacon Bloom filter is the hint; this is
+the authoritative check.
+
+## 5. Encryption — `crypto.py`
+
+After HELLO/HELLO_ACK:
+
+```
+shared = X25519(my_ed25519_key → x25519, their_pk → x25519)
+key    = SHA-256("AMP-v1-pair" | shared | min(id_a, id_b) | max(id_a, id_b))
+```
+
+Every MSG body between that pair is **ChaCha20-Poly1305 (IETF)**:
+
+```
+body = nonce (12 random bytes) | ciphertext + tag
+AAD  = CBOR [ver, type, msg_id, from, to]
+```
+
+The header is the associated data, so a body cannot be replayed under
+another envelope. Relays never decrypt: they read only the header. Keys
+live for one run (a lost peer's key is discarded; a restart re-handshakes).
+
+## 6. Capability document — `card.py`
+
+Carried in HELLO as CBOR. A subset of the A2A Agent Card without the
+web-only fields (no endpoint URL, no OAuth):
+
+```
 {
-  "name": "Clothing Advisor",
-  "description": "I recommend what clothes to wear based on the temperature and weather.",
-  "system_prompt": "You are the Clothing Advisor agent …",
-  "reasoner": { "type": "ollama", "model": "qwen2.5:3b" },
-  "skills": [
-    { "type": "llm_answer", "capability": "clothing_recommendation" },
-    { "type": "goal", "goal": "Recommend what to wear tomorrow …" }
-  ]
+  "name": str, "description": str, "version": str,
+  "skills": [ { "id": str, "name": str, "description": str, "tags": [str],
+                "input_schema": {...}, "output_schema": {...}, "min_trust": uint } ],
+  "llm":    { "model": str, "context_window": uint, "modalities": [str] },
+  "extensions": [uint]
 }
 ```
 
-| field | required | meaning |
+Empty and default values are omitted. Capabilities are the skill ids; the
+beacon Bloom filter is derived from them. The agent builds the card from
+its skills (`capability`, `description`, `input_schema`, `output_schema`,
+`min_trust`) and its reasoner (`model`).
+
+## 7. Sessions **(extension)** — `extensions/session.py`
+
+A bulk or stream link is negotiated inside envelopes, WebRTC-style:
+
+1. A sends SESSION_REQ `{purpose, hint, nonce}` (hint: a transport name,
+   e.g. `wifi`).
+2. B picks the hinted transport if it has one, else any it has, else answers
+   `"none"`; it replies SESSION_ACK `{nonce, transport, params}` where
+   `params` is whatever A needs to connect.
+
+Session transports (TCP/QUIC on the same network preferred, BLE L2CAP as
+fallback) implement the `SessionTransport` interface (`offer(peer) ->
+params`). **None is implemented yet**, so every negotiation today ends in
+`"none"`: keep using core messaging, which never depends on a session.
+
+## 8. Relay / gossip **(extension, partial)** — `extensions/relay.py`
+
+A node whose card says `relay: true` keeps envelopes it overhears that are
+addressed to someone else: `ttl` decremented (dropped when spent), bounded
+queue (256), expired by age (10 min). When it meets the addressee
+(HELLO/HELLO_ACK) it forwards the stored envelopes unchanged — the origin's
+signature still verifies, since `ttl` is not signed, and the relay never
+decrypts. The addressee must have handshaken with the origin to verify.
+A node records the address a peer's envelope *arrived from*, so a peer
+reached through a relay is answered through that relay until it is heard
+directly again.
+
+Gossip between relays has its building blocks (`msg_id` Bloom filter of
+256 bits, k = 3; `missing(their_bloom)`) but **no wire message yet**; it
+will use a type ≥ 16.
+
+## 9. Trust levels — `trust.py`
+
+| level | name | established by |
 |---|---|---|
-| `name` | ✅ | human-readable name; also the uid prefix |
-| `description` | ✅ | one sentence other agents read to decide whether you can help them |
-| `skills` | ✅ | list of `{"type", ...kwargs}`; `type` is `llm_answer`, `goal` or `"module:Class"` |
-| `system_prompt` | | default for every skill that takes one |
-| `reasoner` | | `{"type": "ollama", "model": ...}` (default) or `{"type": "template"}` |
-| `transport` | | `{"type": "localhost"}` (default) or `{"type": "wifi", "interface": ...}` |
+| 0 | `HEARD` | a valid signature (every handshaken peer) |
+| 1 | `VERIFIED` | `PinnedKeys`: the public key was confirmed out of band (QR, fingerprint) and pinned in `~/.loquor/pinned_keys.json` |
+| 2 | `PROXIMATE` | `ProximityProvider` interface (UWB distance bounding) — **stub, nobody is proximate yet** |
 
-Built-in skills:
+`TrustExtension` sets `peer.trust` on every handshake from the stores it has.
 
-| skill | arguments | behaviour |
+A skill declares `min_trust`; it is published in the card and **enforced at
+dispatch**: a request from a peer below the level gets
+`error{insufficient_trust}`.
+
+## 10. Transports — `transport.py` (port), `transports/`
+
+The protocol needs two operations from a link: `broadcast(bytes)` to everyone
+in range and `send(address, bytes)` to one peer. The node stores the address
+a peer was last heard from and hands it back; it never interprets it.
+
+| transport | status | channel |
 |---|---|---|
-| `llm_answer` | `capability`, `system_prompt`, `temperature` (0.2) | answers `{"question"}` with the reasoner |
-| `goal` | `goal`, `system_prompt`, `temperature` (0.2) | finds a peer that can help, asks it, completes the goal once |
+| `localhost` | implemented | UDP multicast `239.255.76.76:47600` on loopback |
+| `wifi` | implemented | same group on the LAN interface, TTL 1 |
+| `memory` | implemented | in-process hub for tests |
+| `bluetooth` | planned | BLE connections, chunked to the MTU; beacons as advertisements |
 
-`{random_number}` in a `system_prompt` is replaced with a fresh 0–100 integer
-on every request. LLMs are poor random generators, so use it when answers
-must vary.
+On multicast, `send` is a broadcast (processes on one host share the port);
+the envelope's `to` field does the addressing.
 
-## 6. Security (PoC level)
+## 11. Application bodies (agent layer, not protocol)
 
-- All agents share one pairing secret. Anyone who has it can join and
-  impersonate any uid.
-- There is no replay protection beyond `msg_id` deduplication within one
-  run, and no encryption: messages are readable on the network.
-- Next steps: per-agent keypairs pinned during pairing, encrypted payloads.
+What the agent puts inside MSG, encrypted. Documented here because the demo
+shows it; the protocol does not interpret it.
+
+```
+{"kind": "request",  "request_id": str, "capability": str, "input": {...}}
+{"kind": "response", "request_id": str, "output": {...}}
+{"kind": "error",    "request_id": str, "code": str, "detail": str}
+```
+
+Error codes: `no_such_capability`, `skill_failed`, `insufficient_trust`,
+`too_large`. A request is retried with the same `request_id` (3 attempts
+within 30 s); the responder caches its reply per `(sender, request_id)`
+and never runs a skill twice for one request.

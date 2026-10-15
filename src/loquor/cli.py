@@ -3,10 +3,10 @@
     python run_agent.py weather_agent.json                    # localhost (default)
     python run_agent.py clothing_agent.json --transport wifi  # other machines on the LAN
 
-The agent advertises itself, listens to everything, answers requests for its
-skills' capabilities and runs its skills' background loops. It runs until
-Ctrl-C. The LLM is a model served by a locally running Ollama unless the
-profile chooses another reasoner.
+The agent beacons (unless quiet/silent), handshakes with the peers it hears,
+answers requests for its skills' capabilities and runs its skills' background
+loops. It runs until Ctrl-C. The LLM is a model served by a locally running
+Ollama unless the profile chooses another reasoner.
 """
 
 from __future__ import annotations
@@ -14,13 +14,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import signal
 import sys
 
 from loquor.config import build_agent, load_profile
+from loquor.protocol.discovery import Visibility
 from loquor.reasoning import OllamaReasoner, ollama_available
 from loquor.transports import TRANSPORTS
+
+HANDSHAKE_TYPES = ("HELLO", "HELLO_ACK", "ACK")
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -33,11 +35,11 @@ async def run(args: argparse.Namespace) -> None:
 
     agent = build_agent(
         load_profile(args.profile),
-        pairing_secret=os.environ.get("LOQUOR_PAIRING_SECRET", "demo-pairing-secret"),
         transport=args.transport,
         interface=args.interface,
         model=args.model,
-        advert_interval=args.advert_interval,
+        visibility=args.visibility,
+        beacon_interval=args.beacon_interval,
     )
     reasoner = agent.reasoner
     if isinstance(reasoner, OllamaReasoner) and not await ollama_available(
@@ -52,8 +54,8 @@ async def run(args: argparse.Namespace) -> None:
     where = getattr(agent.transport, "interface", "?")
     model = getattr(reasoner, "model", reasoner.name)
     print(
-        f"{agent.uid} | model {model} ({reasoner.name}) | transport "
-        f"{args.transport or 'profile'} ({where}) | Ctrl-C to stop",
+        f"{agent.uid} | id {agent.agent_id.hex()} | model {model} ({reasoner.name}) | "
+        f"transport {args.transport or 'profile'} ({where}) | {agent.node.visibility.value} | Ctrl-C to stop",
         flush=True,
     )
     try:
@@ -70,14 +72,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--transport", choices=TRANSPORTS, help="override the profile's transport")
     parser.add_argument("--interface", help="wifi: local IP of the network interface to use")
     parser.add_argument("--model", help="override the profile's Ollama model")
-    parser.add_argument("--advert-interval", type=float, default=10.0, help="seconds between adverts (default 10)")
+    parser.add_argument("--visibility", choices=[v.value for v in Visibility], help="override the profile's visibility")
+    parser.add_argument("--beacon-interval", type=float, default=10.0, help="seconds between beacons (default 10)")
     parser.add_argument(
         "--wire",
-        choices=("all", "no-adverts", "off"),
+        choices=("all", "no-handshake", "off"),
         default="all",
-        help="message log: every message sent/received (default), all but adverts, or none",
+        help="envelope log: every envelope (default), all but HELLO/HELLO_ACK/ACK, or none",
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="also log duplicate deliveries")
+    parser.add_argument("-v", "--verbose", action="store_true", help="also log beacons and duplicates")
 
     args = parser.parse_args(argv)
     try:
@@ -100,10 +103,10 @@ def _setup_logging(args: argparse.Namespace) -> None:
     wire = logging.getLogger("loquor.wire")
     if args.wire == "off":
         wire.setLevel(logging.WARNING)
-    elif args.wire == "no-adverts":
-        # _log_wire passes the message type as the second format argument
+    elif args.wire == "no-handshake":
+        # _log_wire passes the envelope type name as the second format argument
         wire.addFilter(
-            lambda record: not (isinstance(record.args, tuple) and record.args[1:2] == ("advert",))
+            lambda record: not (isinstance(record.args, tuple) and record.args[1:2] and record.args[1] in HANDSHAKE_TYPES)
         )
 
 

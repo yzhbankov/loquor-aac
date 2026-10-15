@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from loquor.agent.directory import Peer
+from loquor.protocol.discovery import Peer
 from loquor.reasoning.base import Reasoner
 
 if TYPE_CHECKING:
@@ -33,8 +33,8 @@ class Context:
         return self._agent.reasoner
 
     def peers(self, capability: str | None = None) -> list[Peer]:
-        """Peers heard recently, optionally only those with a capability."""
-        return self._agent.directory.find(capability)
+        """Handshaken peers, optionally only those with a capability."""
+        return self._agent.node.peers.find(capability)
 
     async def ask(
         self, peer: Peer, capability: str, input: dict[str, Any], timeout: float | None = None
@@ -46,9 +46,13 @@ class Context:
         """
         return await self._agent.ask(peer, capability, input, timeout=timeout)
 
+    async def query(self, capability: str, timeout: float = 1.0) -> list[Peer]:
+        """Ask the mesh who offers a capability (QUERY/OFFER); returns the peers."""
+        return await self._agent.query.query(capability, timeout)
+
     async def wait_for_peers(self) -> None:
-        """Return when the next advert is heard (a new or a known peer)."""
-        event = self._agent.peer_heard
+        """Return when the next beacon or HELLO is heard."""
+        event = self._agent.node.peer_heard
         await event.wait()
         event.clear()
 
