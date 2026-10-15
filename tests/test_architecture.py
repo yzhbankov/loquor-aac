@@ -1,14 +1,22 @@
-"""The dependency rule: only ``agent`` (and config/cli) may import the other layers.
+"""The dependency rule.
 
-``protocol``, ``transports`` and ``reasoning`` know nothing about each
-other or about the agent, so any of them can be swapped alone.
+- ``protocol`` imports nothing but itself: no radio, no LLM, no agent.
+- ``transports`` implement the protocol's transport port and import nothing else.
+- ``reasoning`` imports nothing but itself.
+- ``extensions`` build on ``protocol`` only.
+- nothing below ``agent`` imports ``agent``.
 """
 
 import re
 from pathlib import Path
 
 SRC = Path(__file__).parent.parent / "src" / "loquor"
-LAYERS = ("protocol", "transports", "reasoning")
+ALLOWED = {
+    "protocol": {"protocol"},
+    "transports": {"transports", "protocol"},
+    "reasoning": {"reasoning"},
+    "extensions": {"extensions", "protocol"},
+}
 IMPORT = re.compile(r"^\s*(?:from|import)\s+loquor\.(\w+)", re.MULTILINE)
 
 
@@ -19,11 +27,14 @@ def imports_of(package: str) -> set[str]:
     return found
 
 
-def test_lower_layers_are_independent():
-    for layer in LAYERS:
-        assert imports_of(layer) <= {layer}, f"{layer} imports other layers: {imports_of(layer)}"
+def test_layers_import_only_what_they_may():
+    for layer, allowed in ALLOWED.items():
+        if not (SRC / layer).exists():
+            continue
+        assert imports_of(layer) <= allowed, f"{layer} imports {imports_of(layer) - allowed}"
 
 
 def test_nothing_below_the_agent_imports_it():
-    for layer in LAYERS:
-        assert "agent" not in imports_of(layer)
+    for layer in ALLOWED:
+        if (SRC / layer).exists():
+            assert "agent" not in imports_of(layer)

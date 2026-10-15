@@ -17,7 +17,7 @@ import json
 from typing import Any
 
 from loquor.agent.context import Context
-from loquor.agent.directory import Peer
+from loquor.protocol.discovery import Peer
 from loquor.agent.skill import Skill
 from loquor.agent.tracker import RequestError
 
@@ -61,7 +61,7 @@ class Goal(Skill):
         decision = await self._decide(peer, ctx)
         if decision is None:
             return False
-        ctx.log("reasoning about %s: useful=%s — %s", peer.uid, decision["useful"], decision["reason"])
+        ctx.log("reasoning about %s: useful=%s — %s", peer.label, decision["useful"], decision["reason"])
         if not decision["useful"]:
             return True
 
@@ -70,10 +70,10 @@ class Goal(Skill):
         try:
             output = await ctx.ask(peer, capability, {"question": question})
         except TimeoutError:
-            ctx.log("%s did not answer; will retry on its next advert", peer.uid)
+            ctx.log("%s did not answer; will retry on its next beacon", peer.label)
             return False
         except RequestError as exc:
-            ctx.log("%s could not help: %s", peer.uid, exc)
+            ctx.log("%s could not help: %s", peer.label, exc)
             return True
         answer = str(output.get("answer", output))
 
@@ -98,7 +98,7 @@ class Goal(Skill):
         ctx.log(
             "\n=== Goal complete ===\ngoal      : %s\nasked     : %s (%s)\nwhy       : %s\n"
             "question  : %s\nanswer    : %s\noutcome   : %s\n",
-            self.goal, peer.name, peer.uid, decision["reason"], question, answer, self.result["outcome"],
+            self.goal, peer.name, peer.label, decision["reason"], question, answer, self.result["outcome"],
         )
         return True
 

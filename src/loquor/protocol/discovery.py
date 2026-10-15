@@ -122,6 +122,7 @@ class Peer:
     bloom: bytes = bytes(BLOOM_SIZE)
     seq: int | None = None  # last beacon seq
     trust: int = Trust.HEARD
+    extensions: list[int] = field(default_factory=list)  # chosen with it at HELLO
     last_seen: float = field(default_factory=time.monotonic)
 
     @property

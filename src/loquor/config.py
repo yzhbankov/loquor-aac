@@ -8,6 +8,8 @@ constructor's keyword arguments::
       "name": "Weather Station",
       "description": "I report tomorrow's weather.",
       "system_prompt": "You are ...",                    # default for skills that take one
+      "visibility": "visible",                            # visible | quiet | silent
+      "key_file": "~/.loquor/keys/weather.key",           # default: derived from the name
       "transport": {"type": "wifi"},                      # default: localhost
       "reasoner":  {"type": "ollama", "model": "qwen2.5:3b"},
       "skills": [
@@ -24,18 +26,26 @@ from __future__ import annotations
 import importlib
 import inspect
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from loquor.agent.agent import Agent
 from loquor.agent.skills import BUILTIN_SKILLS
+from loquor.protocol.discovery import Visibility, slug
+from loquor.protocol.identity import Identity
 from loquor.reasoning import OllamaReasoner, TemplateReasoner
 from loquor.transports import TRANSPORTS, make_transport
 
 BUILTIN_REASONERS = {"ollama": OllamaReasoner, "template": TemplateReasoner}
 
-PROFILE_FIELDS = {"name", "description", "system_prompt", "transport", "reasoner", "skills"}
+PROFILE_FIELDS = {"name", "description", "system_prompt", "visibility", "key_file",
+                  "transport", "reasoner", "skills"}
 REQUIRED_FIELDS = {"name", "description", "skills"}
+
+
+def loquor_home() -> Path:
+    return Path(os.environ.get("LOQUOR_HOME", Path.home() / ".loquor"))
 
 
 def load_profile(path: str | Path) -> dict[str, Any]:
@@ -58,11 +68,12 @@ def load_profile(path: str | Path) -> dict[str, Any]:
 def build_agent(
     profile: dict[str, Any],
     *,
-    pairing_secret: str,
     transport: str | None = None,
     interface: str | None = None,
     model: str | None = None,
-    advert_interval: float = 10.0,
+    visibility: str | None = None,
+    identity: Identity | None = None,
+    beacon_interval: float = 10.0,
 ) -> Agent:
     """Instantiate every part of a profile. Command-line overrides win."""
     transport_spec = dict(profile.get("transport") or {"type": "localhost"})
@@ -79,14 +90,18 @@ def build_agent(
         instantiate(spec, BUILTIN_SKILLS, "skill", defaults={"system_prompt": profile.get("system_prompt")})
         for spec in profile["skills"]
     ]
+    if identity is None:
+        key_file = profile.get("key_file") or loquor_home() / "keys" / f"{slug(profile['name']) or 'agent'}.key"
+        identity = Identity.load_or_create(Path(key_file).expanduser())
     return Agent(
         name=profile["name"],
         description=profile["description"],
         skills=skills,
         reasoner=instantiate(reasoner_spec, BUILTIN_REASONERS, "reasoner"),
         transport=_build_transport(transport_spec),
-        pairing_secret=pairing_secret,
-        advert_interval=advert_interval,
+        identity=identity,
+        visibility=Visibility(visibility or profile.get("visibility") or "visible"),
+        beacon_interval=beacon_interval,
     )
 
 
