@@ -9,22 +9,32 @@ Laptops are just the quickest hardware to demo on. Think of the two agents
 as a robot and a base station, two sensor nodes, or a handheld meeting a
 machine: the protocol, the profiles and the code are identical.
 
+The forecaster has a **sensor** (`weather_sensor.py`: invents weather —
+stand-in for a real thermometer); the advisor has a **trigger**
+(`fancy_print.py`: prints an outfit card — stand-in for a display or a
+relay). Both are one small class next to the profile.
+
 ```mermaid
 sequenceDiagram
-    participant C as Clothing Advisor
+    participant S as weather sensor
     participant W as Weather Forecaster
-    Note over C,W: both start; each generates or loads its key
+    participant C as Clothing Advisor
+    participant T as show_outfit trigger
+    Note over W,C: both start; each generates or loads its key
+    S-->>W: reading every 5 s {temperature_c, condition, wind_kph}
     W-->>C: beacon (id prefix + Bloom of "weather_forecast")
     C->>W: HELLO (public key, card)
     W->>C: HELLO_ACK (public key, card)
-    Note over C,W: both derive the shared key; everything below is encrypted
+    Note over W,C: both derive the shared key; everything below is encrypted
     Note over C: LLM: "can this peer help my goal?" → yes, ask weather_forecast
     C->>W: MSG request {capability: weather_forecast, input: {question}}
     W->>C: ACK
-    Note over W: LLM answers from its system prompt (+ random temperature)
+    Note over W: LLM answers from the latest reading in its prompt
     W->>C: MSG response {output: {answer: "12 °C, cloudy"}}
     C->>W: ACK
     Note over C: LLM turns the forecast into clothes → "=== Goal complete ==="
+    Note over C: LLM proposes show_outfit {forecast, items, note}; schema validated
+    C->>T: fire(input) → the card is printed
 ```
 
 ## 1. Setup (once per device)
@@ -85,12 +95,20 @@ How to read it:
 | `BODY request/response` | what was said, in the clear, *before* encryption / *after* decryption |
 | `SEND/RECV MSG` | the encrypted envelope on the wire (303 B — nothing readable in it) |
 | `ACK` | delivery confirmation for each MSG |
+| `firing show_outfit — …` / `TRIGGER show_outfit {…}` | the LLM's proposal passed schema validation and the trigger ran; the outfit card follows |
+
+Terminal 1 with `-v` also shows `SENSOR weather: temperature_c=12, condition=…`
+every 5 s: the reading the forecast was grounded in.
 
 Terminal 1 shows the mirror image: the request arriving, its LLM answering,
 the response leaving.
 
 Things to try:
 - Restart the advisor: a new random forecast, different clothes, same ids.
+- Ask the forecaster for raw data instead of prose: any skill can
+  `ctx.ask(peer, "sensor_report", {"sensor": "weather"})` and get the numbers.
+- Swap the sensor for a real one: copy `weather_sensor.py`, read your
+  instrument in `read()`, change one line in `weather_agent.json`.
 - Stop the forecaster: ~30 s later the advisor logs `lost weather-forecaster-…`.
 - `--wire no-handshake` hides HELLO/ACK lines; `--wire off` hides all envelopes; `-v` also shows beacons.
 

@@ -276,6 +276,8 @@ shows it; the protocol does not interpret it.
 ```
 
 Error codes: `no_such_capability`, `skill_failed`, `insufficient_trust`,
-`too_large`. A request is retried with the same `request_id` (3 attempts
+`too_large`. The built-in capability `sensor_report` answers
+`{"sensor"?: name}` with `{"readings": {name: {value, unit, at, error?}}}` —
+an agent's sensors, as structured data, to any peer allowed to ask. A request is retried with the same `request_id` (3 attempts
 within 30 s); the responder caches its reply per `(sender, request_id)`
 and never runs a skill twice for one request.
