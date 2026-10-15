@@ -55,6 +55,22 @@ loquor run weather_agent.json
 loquor run clothing_agent.json
 ```
 
+These use the default transport, `--transport localhost`: the agents talk
+over the machine's loopback interface, and no network is needed. Agents on
+other machines can't hear them. To talk between laptops, use
+`--transport wifi` (section 3). Both agents must use the same transport: a
+`localhost` agent and a `wifi` agent don't hear each other, even on the same
+machine.
+
+| Transport | Flag | Who can talk |
+|---|---|---|
+| localhost | none (default), or `--transport localhost` | agents on this machine |
+| Wi-Fi / LAN | `--transport wifi` | agents on the same Wi-Fi, hotspot or wired network |
+| Bluetooth | `--transport bluetooth` | planned, not available yet |
+
+The startup line shows which transport is in use:
+`weather-forecaster-1a58e8d8 | model qwen2.5-3b (embedded) | transport localhost (127.0.0.1) | Ctrl-C to stop`
+
 Each agent starts its own copy of the model (about 5 s, about 2.5 GB of
 memory each). Start them in any order. Within about 15 seconds terminal 2
 shows the following (an agent is heard at its next advert, up to 10 s later):
