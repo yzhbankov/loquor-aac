@@ -32,6 +32,7 @@ from typing import Any
 from loquor.agent.context import Context
 from loquor.agent.skill import Skill
 from loquor.agent.tracker import RequestError, RequestTracker
+from loquor.extensions.query import QueryExtension
 from loquor.protocol.card import AgentCard, skill_entry
 from loquor.protocol.discovery import Peer, Visibility
 from loquor.protocol.identity import Identity
@@ -78,6 +79,7 @@ class Agent:
         self.node = Node(self.identity, transport, self.card(), visibility=visibility,
                          beacon_interval=beacon_interval)
         self.node.on_message(self._on_body)
+        self.query = QueryExtension(self.node)
         self.tracker = RequestTracker()
         self.context = Context(self)
         self._tasks: set[asyncio.Task] = set()

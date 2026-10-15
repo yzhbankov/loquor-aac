@@ -83,8 +83,8 @@ HELLO or any valid envelope), and discards the pair key.
 | 2 | `HELLO_ACK` | ✅ | same + `chosen: [uint]` (extension intersection) — plaintext |
 | 3 | `MSG` | ✅ | application payload, encrypted (§5) |
 | 4 | `ACK` | ✅ | the acknowledged `msg_id` (16 bytes) — plaintext, unicast |
-| 5 | `QUERY` | extension | not yet implemented |
-| 6 | `OFFER` | extension | not yet implemented |
+| 5 | `QUERY` | extension | CBOR `{capability: str, nonce: 8B}` — broadcast, plaintext |
+| 6 | `OFFER` | extension | CBOR `{capability: str, nonce: 8B}` — unicast reply, plaintext |
 | 7 | `SESSION_REQ` | extension | not yet implemented |
 | 8 | `SESSION_ACK` | extension | not yet implemented |
 | 16+ | reserved | | decoded, ignored |
@@ -105,6 +105,13 @@ does not depend on it.
 
 Unknown types from handshaken peers are ignored with a debug log; the node
 keeps working. Extensions register a handler per type (`Node.register`).
+
+**QUERY / OFFER — `extensions/query.py`.** "Who offers capability X?"
+A node broadcasts QUERY; every handshaken `visible` or `quiet` node whose
+card lists the capability replies OFFER with the same nonce. The asker
+collects OFFERs for a timeout (default 1 s) and adds the peers it already
+knew to have the capability. The beacon Bloom filter is the hint; this is
+the authoritative check.
 
 ## 5. Encryption — `crypto.py`
 

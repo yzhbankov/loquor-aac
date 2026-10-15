@@ -46,6 +46,10 @@ class Context:
         """
         return await self._agent.ask(peer, capability, input, timeout=timeout)
 
+    async def query(self, capability: str, timeout: float = 1.0) -> list[Peer]:
+        """Ask the mesh who offers a capability (QUERY/OFFER); returns the peers."""
+        return await self._agent.query.query(capability, timeout)
+
     async def wait_for_peers(self) -> None:
         """Return when the next beacon or HELLO is heard."""
         event = self._agent.node.peer_heard

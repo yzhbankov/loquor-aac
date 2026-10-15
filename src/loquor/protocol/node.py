@@ -272,7 +272,7 @@ class Node:
             wire.debug("IGNORE HELLO from %s: silent", env.from_id[:4].hex())
             return
         peer, new = self.peers.heard_hello(env.from_id, public_key, card.to_dict(), address)
-        peer.extensions = [int(e) for e in body.get("chosen" if ack else "ext", [])]
+        peer.extensions = [int(e) for e in body.get("ext", [])]  # what it supports; chosen = intersection
         peer.seq = int(body.get("seq", 0)) & 0xFF  # the card version its beacons will carry
         self.keys[peer.agent_id] = pair_key(self.identity, public_key, peer.agent_id)
         if new:
