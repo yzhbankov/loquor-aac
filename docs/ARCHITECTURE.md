@@ -69,7 +69,7 @@ SQLite table of tasks keyed by `task_id`, with `role` (`requester`/`server`), st
 
 ## The broadcast agent (`broadcast.py`, `broadcast_agent.py`, `cli.py`)
 
-The prompt-configured agent used by `loquor run` and the example. Its
+The prompt-configured agent used by `run_agent.py` and the example. Its
 protocol is specified in [PROTOCOL.md](PROTOCOL.md): every agent advertises
 its uid and capabilities on a shared channel (UDP multicast on loopback or the
 LAN), listens to everything, answers requests addressed to its uid with its
