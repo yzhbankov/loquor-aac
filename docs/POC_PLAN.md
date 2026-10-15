@@ -55,18 +55,18 @@ result = await agent.ask(peer=peers[0], task="diagnose", data=sensor_observation
 
 ## 3. Technology selection
 
-| Component | Choice |
-|---|---|
-| Hardware | Two laptops, ideally 16 GB RAM each |
-| Programming language | Python |
-| AI models | Local quantized 1.5B–3B models |
-| AI runtime | [Ollama](https://ollama.com) |
-| Discovery | mDNS using Python [zeroconf](https://github.com/python-zeroconf/python-zeroconf) |
-| Initial transport | Wi-Fi/IP, HTTP(S) |
-| Structured messages | JSON + Pydantic |
-| Persistent task state | SQLite |
-| Authentication | Paired identities and pinned credentials |
-| Interface | Simple web dashboard or terminal logs |
+| Component | Planned | Implemented (see [PROTOCOL.md](PROTOCOL.md)) |
+|---|---|---|
+| Hardware | Two laptops, ideally 16 GB RAM each | same |
+| Programming language | Python | Python 3.10+ |
+| AI models | Local quantized 1.5B–3B models | `qwen2.5:3b` by default, any Ollama model |
+| AI runtime | [Ollama](https://ollama.com) | Ollama; deterministic template for tests |
+| Discovery | mDNS (zeroconf) | 16-byte beacons over the transport itself (no mDNS) |
+| Initial transport | Wi-Fi/IP, HTTP(S) | UDP multicast on loopback / LAN; BLE next |
+| Structured messages | JSON + Pydantic | CBOR envelopes, Ed25519-signed, ChaCha20-Poly1305 bodies |
+| Persistent task state | SQLite | not yet; requests are retried and answered idempotently within a run |
+| Authentication | Paired identities and pinned credentials | per-device Ed25519 keys; trust levels 0/1/2, pinned keys = level 1 |
+| Interface | Simple web dashboard or terminal logs | terminal logs |
 
 For version one, use one laptop as a Wi-Fi hotspot and connect the second — neither requires internet. (This still requires a local Wi-Fi link; it is not yet a fully infrastructure-free multi-radio implementation.)
 

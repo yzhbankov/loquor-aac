@@ -2,81 +2,131 @@
 
 **loquor** — Latin for *"I speak"*, *"I talk"*, *"I say"*. **aac** — agent-to-agent communication.
 
-Loquor gives AI agents running on different devices the ability to communicate with each other **offline**, over any local transport — Wi-Fi/IP today, with BLE, UWB, and mesh planned — with no internet access, no cloud services, and no central server.
-
-## The idea
-
-Independent AI-powered devices should be able to:
-
-1. **Discover** each other automatically when they come into range,
-2. **Authenticate** and exchange capabilities,
-3. **Collaborate** on tasks by exchanging structured messages — each agent contributing its own private knowledge and local reasoning.
-
-This is different from asking a cloud chatbot a question: two independent intelligences with *separate* knowledge perform a *coordinated* task, entirely at the edge. See [docs/VISION.md](docs/VISION.md) for the full concept and [docs/POC_PLAN.md](docs/POC_PLAN.md) for the proof-of-concept plan this repository implements.
-
-## The platform
-
-One agent program, configured by a JSON profile, speaking **AMP v1** (the
-Agent Mesh Protocol, [docs/PROTOCOL.md](docs/PROTOCOL.md)) and built from
-layers with one small interface each ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
-
-| layer | what it is | ships with |
-|---|---|---|
-| **protocol** | Ed25519 identity, signed CBOR envelopes, 16-byte beacons, HELLO handshake, ChaCha20-Poly1305 between peers | types `HELLO` / `HELLO_ACK` / `MSG` / `ACK` |
-| **transports** | move bytes to everyone in range or to one peer | `localhost`, `wifi` (multicast); `bluetooth` planned |
-| **extensions** | optional protocol features | `QUERY`/`OFFER`, sessions, relay, trust levels |
-| **reasoning** | a local LLM behind a one-method interface | Ollama, deterministic template |
-| **agent** | orchestrator: dispatch requests to **skills** by capability, enforce trust, ask with retries | skills `llm_answer`, `goal` |
-
-Business logic lives in skills. Your own skill, reasoner or transport is one
-Python class, selected in the profile by `"type": "module:Class"`.
+AI agents on different devices that find each other, authenticate and
+collaborate **offline** — over Wi-Fi today, Bluetooth next — with no
+internet, no cloud and no central server. Each agent runs its own local LLM
+and keeps its own knowledge; together they do what neither could alone.
 
 ```
-loquor-aac/
-├── docs/                        Vision, PoC plan, architecture, protocol spec
-├── src/loquor/                  protocol/ transports/ extensions/ reasoning/ agent/ config.py cli.py
-├── run_agent.py                 Runs one agent from a profile JSON
-├── demo/weather_and_clothes/    Two agent profiles + how to run them
-└── tests/
+   laptop A                                   laptop B
+ ┌──────────────────┐     same Wi-Fi /     ┌───────────────────┐
+ │ Clothing Advisor │◀───── hotspot ──────▶│ Weather Forecaster│
+ │  (qwen2.5 via    │  beacon · HELLO ·    │  (qwen2.5 via     │
+ │   Ollama)        │  encrypted MSG/ACK   │   Ollama)         │
+ └──────────────────┘                      └───────────────────┘
+      "what do I wear tomorrow?"  ──▶  "12 °C, cloudy"  ──▶  "light jacket, jeans"
 ```
 
-## Quick start
+## How it works, in one minute
 
-Needs Python 3.10+ and [Ollama](https://ollama.com) running locally.
+1. **Identity.** On first run an agent generates an Ed25519 keypair and
+   keeps it in `~/.loquor/keys/`. Its id is a hash of its public key.
+2. **Discovery.** Every 10 s it broadcasts a 16-byte **beacon**: id prefix +
+   a Bloom filter of what it can do. Small enough for a BLE advertisement.
+3. **Handshake.** Hearing an unknown beacon, an agent sends **HELLO** (public
+   key + capability card). The other verifies and answers **HELLO_ACK**.
+   Both derive a shared key (X25519).
+4. **Messages.** From then on every message between the two is encrypted
+   (ChaCha20-Poly1305), signed, deduplicated, and acknowledged.
+5. **Skills.** A request names a *capability*; the agent dispatches it to the
+   skill that owns it, which may call the local LLM. A skill with a *goal*
+   looks at the peers it hears, decides who can help, asks, and acts.
+
+The wire protocol is **AMP v1** (Agent Mesh Protocol). Sequence diagrams and
+every byte on the wire: [docs/PROTOCOL.md](docs/PROTOCOL.md). How the code is
+layered: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Run it (5 minutes)
+
+Needs **Python 3.10+** and **[Ollama](https://ollama.com)** running locally.
 
 ```bash
+git clone https://github.com/yzhbankov/loquor-aac.git && cd loquor-aac
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-ollama pull qwen2.5:3b                                        # once
-python run_agent.py demo/weather_and_clothes/weather_agent.json    # terminal 1
-python run_agent.py demo/weather_and_clothes/clothing_agent.json   # terminal 2
+ollama pull qwen2.5:3b                                            # once, ~2 GB
+
+python run_agent.py demo/weather_and_clothes/weather_agent.json   # terminal 1
+python run_agent.py demo/weather_and_clothes/clothing_agent.json  # terminal 2
 ```
 
-Within a few seconds the Clothing Advisor hears the Weather Forecaster,
-decides it needs a forecast, asks for one and prints what to wear tomorrow.
-See [demo/weather_and_clothes](demo/weather_and_clothes/README.md)
-for running on two machines. Profile fields: [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Within ~15 s terminal 2 prints `=== Goal complete ===` with the forecast it
+got and the clothes it recommends. Two machines on one Wi-Fi: add
+`--transport wifi` on both. Full walkthrough, what the log lines mean, and
+troubleshooting: [demo/weather_and_clothes/README.md](demo/weather_and_clothes/README.md).
 
-### Tests
+## Write your own agent
+
+An agent is a JSON profile. Built-in parts are picked by name; your own by
+`"module:Class"`:
+
+```json
+{
+  "name": "Soil Station",
+  "description": "I report soil moisture and decide whether to water.",
+  "reasoner": { "type": "ollama", "model": "qwen2.5:3b" },
+  "skills": [
+    { "type": "llm_answer", "capability": "soil_report",
+      "system_prompt": "You report soil moisture. Reading: {random_number} %." },
+    { "type": "my_farm.irrigation:Irrigation" }
+  ]
+}
+```
+
+```python
+# my_farm/irrigation.py
+from loquor import Skill
+
+class Irrigation(Skill):
+    capability = "irrigation_plan"
+
+    async def run(self, ctx):                      # background loop
+        while True:
+            for forecaster in ctx.peers("weather_forecast"):
+                out = await ctx.ask(forecaster, "weather_forecast", {"question": "Rain tomorrow?"})
+                ctx.log("forecast: %s", out["answer"])
+            await ctx.wait_for_peers()
+```
+
+Profile fields, skill interface and extension points: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Develop
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest                                      # no model needed
+python -m pytest            # 50 tests, no model or network needed, ~3 s
 ```
 
-## Status and roadmap
+Layout, how to add a skill / transport / extension, logging, conventions:
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-- [x] AMP v1 core: persisted Ed25519 identity, signed CBOR envelopes, beacons with capability Bloom filter, HELLO handshake, encrypted bodies, ACKs, visibility policies
-- [x] Extensions: QUERY/OFFER, session negotiation (interface only), relay store-and-forward, trust levels with pinned keys
-- [x] `localhost` and `wifi` (LAN multicast) transports
-- [x] Agent with skills: capability dispatch, trust enforcement, idempotent answers, retries
-- [x] Local LLM reasoning via Ollama, with deterministic fallback
-- [x] Profiles with built-in and custom (`module:Class`) parts
-- [ ] Verified two-laptop run over Wi-Fi / hotspot
-- [ ] Bluetooth (BLE) transport adapter (same agent, new transport)
-- [ ] Session transports (TCP on Wi-Fi, BLE L2CAP); relay gossip wire message
-- [ ] UWB proximity (trust level 2)
-- [ ] Sensors layer with a first sensor demo
+```
+loquor-aac/
+├── src/loquor/
+│   ├── protocol/      AMP v1 core: identity, envelope, discovery, card, crypto, node
+│   ├── transports/    localhost + wifi (UDP multicast), memory (tests); BLE planned
+│   ├── extensions/    QUERY/OFFER, sessions, relay, trust levels
+│   ├── reasoning/     Reasoner interface: Ollama, template
+│   ├── agent/         orchestrator + skills (llm_answer, goal)
+│   ├── config.py      profile JSON → objects
+│   └── cli.py
+├── run_agent.py       run one agent from a profile
+├── demo/              the weather & clothes demo
+├── docs/              PROTOCOL · ARCHITECTURE · DEVELOPMENT · VISION · POC_PLAN
+└── tests/             one file per protocol section + the dependency rule
+```
+
+## Status
+
+| done | next |
+|---|---|
+| AMP v1 core: persisted identity, signed CBOR envelopes, beacons, HELLO handshake, encryption, ACK, visibility | Bluetooth transport (beacons as advertisements, envelopes over GATT/L2CAP) |
+| Extensions: QUERY/OFFER, session negotiation, relay store-and-forward, trust levels with pinned keys | Session transports (TCP on Wi-Fi, BLE L2CAP); relay gossip message |
+| `localhost` and `wifi` transports; agent with skills, trust enforcement, idempotent answers | Pairing ceremony (QR / fingerprint) to pin keys from the CLI |
+| Demo verified on one machine over Wi-Fi multicast | Two-laptop run; UWB proximity; sensors layer |
+
+Why this exists and where it is going: [docs/VISION.md](docs/VISION.md),
+[docs/POC_PLAN.md](docs/POC_PLAN.md).
 
 ## License
 

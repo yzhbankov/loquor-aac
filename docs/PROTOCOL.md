@@ -5,6 +5,56 @@ Sections marked **(extension)** are optional; **(stub)** means the interface
 exists and the behaviour is minimal. Nothing here depends on a particular
 radio: a transport only carries bytes (§10).
 
+## 0. The protocol in two diagrams
+
+**Life of two agents on one channel.** Beacons are tiny and unsigned; the
+handshake carries keys and capability cards; everything after it is
+encrypted and acknowledged.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant B as Agent B
+    loop every beacon_interval (visible agents)
+        A-->>B: beacon "AM" ver id[:8] bloom seq  (16 B, broadcast, unsigned)
+    end
+    Note over B: unknown id prefix → say hello
+    B->>A: HELLO {pk, card, seq, ext}  (broadcast, signed)
+    Note over A: SHA-256(pk)[:16] == from? signature ok? → store peer, derive pair key
+    A->>B: HELLO_ACK {pk, card, seq, ext, chosen}  (unicast, signed)
+    Note over B: same checks → store peer, derive the same pair key
+    Note over A,B: trust = 0 (heard); 1 if pk pinned; 2 if UWB-proximate
+    A->>B: MSG  body = ChaCha20-Poly1305(pair key, header as AAD)
+    B->>A: ACK  body = msg_id
+    B->>A: MSG  (reply, encrypted)
+    A->>B: ACK
+    opt extensions
+        A->>B: QUERY {capability, nonce}  (broadcast) → B->>A: OFFER
+        A->>B: SESSION_REQ {purpose, hint} → B->>A: SESSION_ACK {transport, params}
+    end
+    Note over A,B: no beacon/envelope from a peer for 3 intervals → forget it, drop its key
+```
+
+**What a receiving node does with every datagram.**
+
+```
+bytes arrive
+  ├─ 16 B starting "AM"?  ──▶ beacon ──▶ known prefix & same seq → refresh last_seen
+  │                                   └─ unknown prefix or new seq → send HELLO (rate-limited)
+  └─ CBOR envelope?  (else DROP: not an envelope / unsupported ver / > 64 KB)
+       ├─ from == me                 → DROP (own, looped back)
+       ├─ msg_id seen before         → DROP (duplicate)
+       ├─ to ∉ {me, broadcast}       → overheard: hand to relay (if any), stop
+       ├─ type HELLO / HELLO_ACK     → pk hashes to from? sig ok with pk? card valid?
+       │                               → store peer, derive key, trust level, reply HELLO_ACK if HELLO
+       ├─ sender not handshaken      → DROP (no key to verify)
+       ├─ signature invalid          → DROP
+       ├─ type MSG                   → decrypt (header is AAD) → ACK → deliver body to the agent
+       ├─ type ACK                   → resolve the waiting sender
+       ├─ registered extension type  → its handler
+       └─ anything else              → ignore (reserved / future)
+```
+
 ## 1. Identity — `identity.py`
 
 - Each agent has an **Ed25519 keypair**, generated once and persisted as a
