@@ -1,15 +1,12 @@
 """Run one loquor agent from a profile JSON.
 
     python run_agent.py weather_agent.json                    # localhost (default)
-    python run_agent.py clothing_agent.json --transport wifi  # other laptops on the LAN
-    python -m loquor ...                                      # same, with loquor importable
+    python run_agent.py clothing_agent.json --transport wifi  # other machines on the LAN
 
-The agent advertises itself, listens to everything, answers requests
-addressed to its uid and — if its profile has a goal — asks the agents it
-hears. It runs until Ctrl-C.
-
-The LLM is a model served by a locally running Ollama
-(``ollama serve`` + ``ollama pull <model>``).
+The agent advertises itself, listens to everything, answers requests for its
+skills' capabilities and runs its skills' background loops. It runs until
+Ctrl-C. The LLM is a model served by a locally running Ollama unless the
+profile chooses another reasoner.
 """
 
 from __future__ import annotations
@@ -21,9 +18,9 @@ import os
 import signal
 import sys
 
-from loquor.broadcast import TRANSPORTS, make_bus
-from loquor.broadcast_agent import AgentProfile, BroadcastAgent
-from loquor.reasoning import DEFAULT_MODEL, OllamaReasoner, ollama_available
+from loquor.config import build_agent, load_profile
+from loquor.reasoning import OllamaReasoner, ollama_available
+from loquor.transports import TRANSPORTS
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -34,42 +31,29 @@ async def run(args: argparse.Namespace) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         loop.add_signal_handler(sig, task.cancel)
 
-    profile = AgentProfile.from_file(args.profile)
-    model = args.model or profile.model or DEFAULT_MODEL
-    if not await ollama_available(model=model):
-        sys.exit(
-            f"model {model!r} is not available in Ollama. Start Ollama and "
-            f"`ollama pull {model}`, or choose another model with --model"
-        )
-    reasoner = OllamaReasoner(model=model)
-
-    bus = make_bus(args.transport, interface=args.interface)
-    agent = BroadcastAgent(
-        profile,
-        reasoner,
+    agent = build_agent(
+        load_profile(args.profile),
         pairing_secret=os.environ.get("LOQUOR_PAIRING_SECRET", "demo-pairing-secret"),
-        bus=bus,
+        transport=args.transport,
+        interface=args.interface,
+        model=args.model,
         advert_interval=args.advert_interval,
     )
-
-    async def show(result: dict) -> None:
-        print(
-            "\n=== Goal complete ===\n"
-            f"goal      : {result['goal']}\n"
-            f"asked     : {result['asked']['name']} ({result['asked']['uid']})\n"
-            f"why       : {result['reasoning']}\n"
-            f"question  : {result['asked']['question']}\n"
-            f"answer    : {result['answer']}\n"
-            f"outcome   : {result['outcome']}\n",
-            flush=True,
+    reasoner = agent.reasoner
+    if isinstance(reasoner, OllamaReasoner) and not await ollama_available(
+        reasoner.base_url, model=reasoner.model
+    ):
+        sys.exit(
+            f"model {reasoner.model!r} is not available in Ollama. Start Ollama and "
+            f"`ollama pull {reasoner.model}`, or choose another model with --model"
         )
 
-    agent.on_result(show)
     await agent.start()
-    where = getattr(bus, "interface", "?")
+    where = getattr(agent.transport, "interface", "?")
+    model = getattr(reasoner, "model", reasoner.name)
     print(
-        f"{agent.uid} | model {model} (ollama) | transport {args.transport} "
-        f"({where}) | Ctrl-C to stop",
+        f"{agent.uid} | model {model} ({reasoner.name}) | transport "
+        f"{args.transport or 'profile'} ({where}) | Ctrl-C to stop",
         flush=True,
     )
     try:
@@ -82,12 +66,10 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="run_agent.py", description="run one loquor agent from a profile JSON"
     )
-    parser.add_argument("profile", help="agent profile JSON (name, description, capabilities, system_prompt, ...)")
-    parser.add_argument("--transport", choices=TRANSPORTS, default="localhost")
+    parser.add_argument("profile", help="agent profile JSON (see docs/ARCHITECTURE.md)")
+    parser.add_argument("--transport", choices=TRANSPORTS, help="override the profile's transport")
     parser.add_argument("--interface", help="wifi: local IP of the network interface to use")
-    parser.add_argument(
-        "--model", help=f"Ollama model name (default: the profile's, else {DEFAULT_MODEL})"
-    )
+    parser.add_argument("--model", help="override the profile's Ollama model")
     parser.add_argument("--advert-interval", type=float, default=10.0, help="seconds between adverts (default 10)")
     parser.add_argument(
         "--wire",

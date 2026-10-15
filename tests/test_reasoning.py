@@ -1,4 +1,5 @@
-from loquor.reasoning import FallbackReasoner, Reasoner, TemplateReasoner, _model_matches
+from loquor.reasoning import FallbackReasoner, Reasoner, TemplateReasoner
+from loquor.reasoning.ollama import _model_matches
 
 
 class _Broken(Reasoner):
