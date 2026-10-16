@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,6 +52,7 @@ class TriggerHub:
                 raise ValueError(f"two triggers named {trigger.name!r}")
             self._triggers[trigger.name] = trigger
         self.reasoner = reasoner
+        self.history: deque[dict[str, Any]] = deque(maxlen=20)  # last fires, for `loquor status`
 
     def names(self) -> list[str]:
         return list(self._triggers)
@@ -138,14 +141,16 @@ class TriggerHub:
         problem = self.validate(name, input)
         if problem:
             raise TriggerError(f"invalid input for {name}: {problem}")
+        entry: dict[str, Any] = {"trigger": name, "input": input, "at": time.time()}
         try:
             result = await trigger.fire(input)
-        except TriggerError:
-            raise
         except Exception as exc:
-            raise TriggerError(f"{name} failed: {type(exc).__name__}: {exc}") from exc
+            error = exc if isinstance(exc, TriggerError) else TriggerError(f"{name} failed: {type(exc).__name__}: {exc}")
+            self.history.append({**entry, "error": str(error)})
+            raise error from exc
         if not isinstance(result, dict):
             result = {}
+        self.history.append({**entry, "result": result})
         log.info("TRIGGER %s %s -> %s", name, json.dumps(input, ensure_ascii=False)[:300],
                  json.dumps(result, ensure_ascii=False, default=str)[:200])
         return result

@@ -175,13 +175,18 @@ class Agent:
         request_id = uuid.uuid4().hex
         body = {"kind": "request", "request_id": request_id, "capability": capability, "input": input}
         future = self.tracker.open(request_id)
+        log.info("%s: asking %s for %s: %s", self.uid, peer.label, capability, _brief(input))
         try:
-            for _ in range(self.max_attempts):
+            for attempt in range(self.max_attempts):
                 await self._send(peer, body)
                 try:
-                    return await asyncio.wait_for(asyncio.shield(future), timeout / self.max_attempts)
+                    output = await asyncio.wait_for(asyncio.shield(future), timeout / self.max_attempts)
                 except asyncio.TimeoutError:
+                    if attempt + 1 < self.max_attempts:
+                        log.info("%s: no answer from %s yet; asking again", self.uid, peer.label)
                     continue
+                log.info("%s: %s answered: %s", self.uid, peer.label, _brief(output))
+                return output
             raise TimeoutError(f"no response from {peer.label}")
         finally:
             self.tracker.close(request_id)
@@ -227,18 +232,24 @@ class Agent:
         capability = str(body.get("capability", ""))
         request_id = str(body.get("request_id", ""))
         skill = self._handlers.get(capability)
+        input = dict(body.get("input") or {})
+        log.info("%s: %s asks for %s: %s", self.uid, peer.label, capability or "?", _brief(input))
         if skill is None:
+            log.info("%s: refused %s: no capability %r", self.uid, peer.label, capability)
             return _error(request_id, "no_such_capability", f"{self.uid} has no capability {capability!r}")
         if peer.trust < skill.min_trust:
+            log.info("%s: refused %s: %s needs trust %d, peer has %d",
+                     self.uid, peer.label, capability, skill.min_trust, peer.trust)
             return _error(request_id, "insufficient_trust",
                           f"{capability!r} needs trust level {skill.min_trust}, you are at {peer.trust}")
         try:
-            output = await skill.handle(dict(body.get("input") or {}), self.context)
+            output = await skill.handle(input, self.context)
         except Exception as exc:
             log.error("%s: skill %r failed", self.uid, capability, exc_info=exc)
             return _error(request_id, "skill_failed", f"{type(exc).__name__}: {exc}")
         if not isinstance(output, dict):
             return _error(request_id, "skill_failed", f"skill returned {type(output).__name__}, not a dict")
+        log.info("%s: answered %s: %s", self.uid, peer.label, _brief(output))
         return {"kind": "response", "request_id": request_id, "output": output}
 
 
@@ -249,3 +260,12 @@ def _error(request_id: str, code: str, detail: str) -> Body:
 def _summary(body: Body) -> str:
     shown = {k: v for k, v in body.items() if k not in ("kind", "request_id")}
     return json.dumps(shown, ensure_ascii=False, default=str)[:300]
+
+
+def _brief(data: Body, width: int = 160) -> str:
+    """A request's input or a response's output in one short line for the story log."""
+    if set(data) == {"question"} or set(data) == {"answer"}:
+        text = " ".join(str(next(iter(data.values()))).split())
+    else:
+        text = json.dumps(data, ensure_ascii=False, default=str)
+    return text if len(text) <= width else text[: width - 1] + "…"
