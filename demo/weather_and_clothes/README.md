@@ -154,11 +154,33 @@ python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport blu
 The startup line shows `transport bluetooth (ble)`. The beacon rides in the
 BLE advertisement as the device's local name; the messages go over a GATT
 connection, chunked to the link's MTU. Discovery takes one beacon interval
-plus a connection, so allow ~20 s before `met …` appears. macOS asks once
-to allow Bluetooth for your terminal; Linux needs BlueZ 5.50+ and
-`bluetoothd` running. The BLE transport passes the protocol tests over a
-simulated radio; a run on two real radios is the next thing to verify, so
-if it does not work for you, the log is the most useful thing to report.
+plus a connection, so allow ~20 s before `met …` appears.
+
+Before the first run, on **both** devices:
+
+- **Forget any old pairing between the two laptops** (macOS: System
+  Settings → Bluetooth → the other laptop → Forget; Linux:
+  `bluetoothctl remove <the Mac's address>`). A stale bond shows up as
+  `Peer removed pairing information` on macOS. loquor never pairs.
+- **macOS:** allow Bluetooth for your terminal when asked (System Settings
+  → Privacy & Security → Bluetooth).
+- **Linux:** BlueZ 5.50+ with `bluetoothd` running, and set the adapter to
+  LE only so BlueZ does not try a classic connection to a dual-mode laptop
+  (`br-connection-canceled` / `br-connection-unknown` errors):
+
+  ```
+  # /etc/bluetooth/main.conf
+  [General]
+  ControllerMode = le
+  ```
+  then `sudo systemctl restart bluetooth`. A one-time
+  `KeyError: 'Device'` traceback from bleak at startup is harmless: it is
+  bleak noticing our own GATT service in BlueZ.
+
+Verified so far between a Mac and an Ubuntu laptop: beacon seen, connection,
+HELLO delivered. The round trip after that is what the next run should
+show; if it does not, both logs with `-v` are the most useful thing to
+report.
 
 ### Fully offline test
 
@@ -190,6 +212,9 @@ if it does not work for you, the log is the most useful thing to report.
 | `bluetooth transport needs the radio libraries` | `pip install -e ".[ble]"` in the venv |
 | Bluetooth: never `met`, no errors | Bluetooth off or not allowed for the terminal (macOS: System Settings → Privacy & Security → Bluetooth); on Linux check `bluetoothctl show` says `Powered: yes` |
 | Bluetooth: `met` but requests time out | the GATT connection failed; move the devices closer, restart both agents (they reconnect lazily) |
+| `Peer removed pairing information` (macOS) | forget the other laptop in Bluetooth settings on both sides; loquor does not pair |
+| `br-connection-canceled` / `br-connection-busy` (Linux) | set `ControllerMode = le` in `/etc/bluetooth/main.conf` and restart `bluetooth`; update loquor (connects are now serialised) |
+| `Characteristic … was not found` / `Multiple Characteristics` | the other side runs an older loquor that registered its service twice; update it and restart |
 | two devices silent, same Wi-Fi | guest/corporate Wi-Fi isolates clients and drops multicast — use a hotspot or home router |
 | `DROP … bad signature` | a peer's key changed (it deleted `~/.loquor/keys/`); it will re-handshake on its next beacon |
 | slow answers | on one computer both agents share one Ollama; a 3B model answers in 1–5 s per request on a laptop |
