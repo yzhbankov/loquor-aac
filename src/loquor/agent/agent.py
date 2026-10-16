@@ -44,7 +44,7 @@ from loquor.protocol.identity import Identity
 from loquor.protocol.node import Node
 from loquor.protocol.transport import Transport
 from loquor.reasoning.base import Reasoner
-from loquor.sensors.base import Sensor
+from loquor.sensors.base import Sensor, describe_readings
 from loquor.triggers.base import Trigger
 
 log = logging.getLogger("loquor")
@@ -266,6 +266,10 @@ def _brief(data: Body, width: int = 160) -> str:
     """A request's input or a response's output in one short line for the story log."""
     if set(data) == {"question"} or set(data) == {"answer"}:
         text = " ".join(str(next(iter(data.values()))).split())
+    elif set(data) == {"readings"} and isinstance(data["readings"], dict):
+        text = "readings " + describe_readings(data["readings"])
+    elif not data:
+        text = "(no input)"
     else:
         text = json.dumps(data, ensure_ascii=False, default=str)
     return text if len(text) <= width else text[: width - 1] + "…"

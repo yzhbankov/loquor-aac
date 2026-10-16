@@ -68,6 +68,27 @@ class Reading:
         return d
 
 
+def describe_readings(readings: dict[str, Any]) -> str:
+    """One line for a log or a prompt from ``{name: Reading.to_dict()}``:
+    ``soil_moisture=24 % (1 s ago); soil_temperature=21 °C (1 s ago)``."""
+    parts = []
+    for name, r in readings.items():
+        if not isinstance(r, dict):
+            parts.append(f"{name}={_fmt(r)}")
+            continue
+        if r.get("error"):
+            parts.append(f"{name}: unavailable ({r['error']})")
+            continue
+        value = r.get("value")
+        if isinstance(value, dict):
+            value = ", ".join(f"{k}={_fmt(v)}" for k, v in value.items())
+        else:
+            value = _fmt(value)
+        age = f" ({max(0.0, time.time() - float(r['at'])):.0f} s ago)" if r.get("at") else ""
+        parts.append(f"{name}={value} {r.get('unit', '')}".rstrip() + age)
+    return "; ".join(parts) or "(no readings)"
+
+
 class Sensor:
     name: str = ""
     description: str = ""  # one line the LLM reads: what this measures

@@ -10,7 +10,7 @@ file next to the profile or as an installed module, and list it under
 ``"sensors"`` in the profile. This package imports nothing else in loquor.
 """
 
-from loquor.sensors.base import FunctionSensor, Reading, Sensor
+from loquor.sensors.base import FunctionSensor, Reading, Sensor, describe_readings
 from loquor.sensors.builtin import Command, Simulated
 
 BUILTIN_SENSORS = {
@@ -18,4 +18,4 @@ BUILTIN_SENSORS = {
     "command": Command,
 }
 
-__all__ = ["BUILTIN_SENSORS", "Command", "FunctionSensor", "Reading", "Sensor", "Simulated"]
+__all__ = ["BUILTIN_SENSORS", "Command", "FunctionSensor", "Reading", "Sensor", "Simulated", "describe_readings"]

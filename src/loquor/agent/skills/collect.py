@@ -30,6 +30,7 @@ from loquor.agent.context import Context
 from loquor.agent.skill import Skill, with_sensors
 from loquor.agent.tracker import RequestError
 from loquor.protocol.discovery import Peer
+from loquor.sensors.base import describe_readings as summarize
 from loquor.triggers.base import TriggerError
 
 
@@ -135,19 +136,3 @@ class Collect(Skill):
             lines.append(f"- {node['name']}: {summarize(node['readings'])}")
         return "\n".join(lines) or "(no nodes heard yet)"
 
-
-def summarize(readings: dict[str, Any]) -> str:
-    parts = []
-    for name, r in readings.items():
-        if not isinstance(r, dict):
-            parts.append(f"{name}={r}")
-            continue
-        if r.get("error"):
-            parts.append(f"{name}: unavailable ({r['error']})")
-            continue
-        value = r.get("value")
-        if isinstance(value, dict):
-            value = ", ".join(f"{k}={v}" for k, v in value.items())
-        age = f" ({max(0.0, time.time() - float(r['at'])):.0f} s ago)" if r.get("at") else ""
-        parts.append(f"{name}={value} {r.get('unit', '')}".rstrip() + age)
-    return "; ".join(parts) or "(no readings)"

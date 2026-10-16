@@ -81,7 +81,8 @@ async def run(args: argparse.Namespace) -> None:
         f"{agent.uid} | id {agent.agent_id.hex()} | model {model} ({reasoner.name}) | "
         f"transport {_transport_label(args, profile, settings)} ({where}) | {agent.node.visibility.value} | "
         f"Ctrl-C to stop\n"
-        f"status: loquor status \"{agent.name}\"" + (f" · trace: {trace_path(profile['name'])}" if trace else ""),
+        f"status: loquor status \"{agent.name}\""
+        + (f" · trace: {trace_path(profile['name'])}" if trace and reasoner.name != "none" else ""),
         flush=True,
     )
     try:
