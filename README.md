@@ -67,6 +67,10 @@ got and the clothes it recommends. Two devices on one Wi-Fi: add
 `--transport wifi` on both. Full walkthrough, what the log lines mean, and
 troubleshooting: [demo/weather_and_clothes/README.md](demo/weather_and_clothes/README.md).
 
+A second demo, [emergency triage](demo/triage/README.md), runs three
+automated triage chairs (sensors → LLM assessment → alarm) and a nurse's
+device that asks all of them and decides whom to see first.
+
 ## Write your own agent
 
 An agent is a JSON profile. Built-in parts are picked by name; your own by
@@ -142,7 +146,7 @@ loquor-aac/
 │   ├── config.py      profile JSON → objects
 │   └── cli.py
 ├── run_agent.py       run one agent from a profile
-├── demo/              the weather & clothes demo
+├── demo/              weather & clothes · emergency triage
 ├── docs/              PROTOCOL · ARCHITECTURE · DEVELOPMENT · VISION · POC_PLAN
 └── tests/             one file per protocol section + the dependency rule
 ```

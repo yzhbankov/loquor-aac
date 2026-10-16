@@ -1,0 +1,20 @@
+{
+  "name": "Triage Nurse",
+  "description": "I am the triage nurse's assistant. I collect the status of every patient in the triage chairs and decide who should be seen first.",
+  "reasoner": {
+    "type": "ollama",
+    "model": "qwen2.5:3b"
+  },
+  "triggers": [
+    {
+      "type": "triage_board.py:TriageBoard"
+    }
+  ],
+  "skills": [
+    {
+      "type": "triage_round.py:TriageRound",
+      "expected_chairs": 3,
+      "settle": 12
+    }
+  ]
+}
