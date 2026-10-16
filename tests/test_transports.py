@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from loquor.transports import MemoryHub, MulticastTransport, make_transport
+from loquor.transports import BleTransport, MemoryHub, MulticastTransport, make_transport
 
 
 async def test_memory_broadcast_and_send():
@@ -32,8 +32,10 @@ async def test_memory_broadcast_and_send():
 def test_make_transport():
     assert make_transport("localhost").interface == "127.0.0.1"
     assert isinstance(make_transport("localhost"), MulticastTransport)
-    with pytest.raises(NotImplementedError):
-        make_transport("bluetooth")
+    try:  # the radio libraries are an optional extra; either outcome is correct
+        assert isinstance(make_transport("bluetooth"), BleTransport)
+    except OSError as exc:
+        assert 'pip install -e ".[ble]"' in str(exc)
     with pytest.raises(ValueError):
         make_transport("carrier-pigeon")
 

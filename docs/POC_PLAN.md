@@ -62,7 +62,7 @@ result = await agent.ask(peer=peers[0], task="diagnose", data=sensor_observation
 | AI models | Local quantized 1.5B–3B models | `qwen2.5:3b` by default, any Ollama model |
 | AI runtime | [Ollama](https://ollama.com) | Ollama; deterministic template for tests |
 | Discovery | mDNS (zeroconf) | 16-byte beacons over the transport itself (no mDNS) |
-| Initial transport | Wi-Fi/IP, HTTP(S) | UDP multicast on loopback / LAN; BLE next |
+| Initial transport | Wi-Fi/IP, HTTP(S) | UDP multicast on loopback / LAN; BLE transport implemented, two-radio run pending |
 | Structured messages | JSON + Pydantic | CBOR envelopes, Ed25519-signed, ChaCha20-Poly1305 bodies |
 | Persistent task state | SQLite | not yet; requests are retried and answered idempotently within a run |
 | Authentication | Paired identities and pinned credentials | per-device Ed25519 keys; trust levels 0/1/2, pinned keys = level 1 |
