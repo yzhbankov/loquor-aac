@@ -54,8 +54,9 @@ DEFAULT_MTU = 185
 MIN_CHUNK = 20
 PEER_TTL = 60.0  # forget a peer not advertised for this long
 STREAM_TTL = 15.0  # drop a half-received envelope after this long
-BACKOFF_BASE = 5.0  # after a failed connect/write, skip broadcasts to that peer for 5, 10, 20 … s
-BACKOFF_MAX = 60.0
+BACKOFF_BASE = 2.0  # after a failed connect/write, skip broadcasts to that peer for 2, 4, 8 … s
+BACKOFF_MAX = 30.0
+CONNECT_TIMEOUT = 8.0  # a BLE connection that takes longer than this is not going to happen
 DEFAULT_NAME = "loquor"  # advertised until the first beacon (nodes that never beacon keep it)
 
 
@@ -224,6 +225,7 @@ class BleakBackend(BleBackend):
     async def start_scan(self, on_advertisement: Callable[[Any, str | None], None]) -> None:
         from bleak import BleakScanner
 
+        _quiet_bleak_local_service_noise()
         self._scanner = BleakScanner(detection_callback=lambda device, adv: on_advertisement(device, adv.local_name))
         await self._scanner.start()
 
@@ -298,7 +300,7 @@ class _BleakLink(Link):
 class BleTransport(Transport):
     max_payload = 65536
 
-    def __init__(self, backend: BleBackend | None = None, *, connect_timeout: float = 15.0):
+    def __init__(self, backend: BleBackend | None = None, *, connect_timeout: float = CONNECT_TIMEOUT):
         self.backend = backend
         self.connect_timeout = connect_timeout
         self._on_receive: OnReceive | None = None
@@ -438,6 +440,33 @@ class BleTransport(Transport):
                 link = self._links.pop(key, None)
                 if link is not None:
                     asyncio.get_running_loop().create_task(link.close())
+
+
+class _DropLocalServiceKeyError(logging.Filter):
+    """bleak (BlueZ) logs a KeyError: 'Device' once for our own local GATT service.
+
+    Its D-Bus watcher assumes every GattService1 object belongs to a remote
+    device; the one bless registers for our inbox has no Device property. The
+    exception is caught upstream and nothing is lost, so hide the traceback.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            if isinstance(exc, KeyError) and exc.args == ("Device",):
+                return False
+        return True
+
+
+_noise_filtered = False
+
+
+def _quiet_bleak_local_service_noise() -> None:
+    global _noise_filtered
+    if not _noise_filtered:
+        for name in ("dbus_fast.message_bus", "dbus_fast", "bleak.backends.bluezdbus.manager"):
+            logging.getLogger(name).addFilter(_DropLocalServiceKeyError())
+        _noise_filtered = True
 
 
 def _corebluetooth_advertisement(name: str) -> dict:

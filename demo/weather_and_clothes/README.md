@@ -173,9 +173,7 @@ Before the first run, on **both** devices:
   [General]
   ControllerMode = le
   ```
-  then `sudo systemctl restart bluetooth`. A one-time
-  `KeyError: 'Device'` traceback from bleak at startup is harmless: it is
-  bleak noticing our own GATT service in BlueZ.
+  then `sudo systemctl restart bluetooth`.
 
 Verified between a Mac and an Ubuntu laptop: beacons both ways, handshake,
 the encrypted request and reply, `=== Goal complete ===` — about two
@@ -219,7 +217,8 @@ thing to report; add `-v` only if asked, it is very verbose.
 | `Peer removed pairing information` (macOS) | forget the other laptop in Bluetooth settings on both sides; loquor does not pair |
 | `br-connection-canceled` / `br-connection-busy` (Linux) | set `ControllerMode = le` in `/etc/bluetooth/main.conf` and restart `bluetooth`; update loquor (connects are now serialised) |
 | `Characteristic … was not found` / `Multiple Characteristics` | the other side runs an older loquor that registered its service twice; update it and restart |
-| `connected (mtu 23)` then `Not connected` (Linux) | BlueZ reused the other side's inbound link, which cannot carry our writes; it retries with its own connection within ~20 s |
+| `connected (mtu 23)` then `Not connected` (Linux) | BlueZ reused the other side's inbound link, which cannot carry our writes; it retries with its own connection within a few seconds |
+| the whole exchange takes a minute or more | almost all of it is the LLM on a CPU-only laptop (the radio moves each message in under a second): use `--model qwen2.5:1.5b` there, and `--beacon-interval 3` on both for faster discovery |
 | `peer exposes no loquor inbox` (macOS, first attempt) | stale GATT cache; the next attempt refreshes it |
 | `lost …` a while after the exchange | the link dropped and the peer stopped advertising; it is found again on its next beacon |
 | two devices silent, same Wi-Fi | guest/corporate Wi-Fi isolates clients and drops multicast — use a hotspot or home router |
