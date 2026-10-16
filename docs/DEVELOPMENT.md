@@ -98,7 +98,7 @@ Built-in parts and their arguments:
 | part | `type` | arguments |
 |---|---|---|
 | skill | `llm_answer` | `capability`, `system_prompt`, `temperature` (0.2), `sensors` ([names]), `max_chars` (3000) |
-| skill | `goal` | `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]) |
+| skill | `goal` | `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]), `min_answers` (1), `settle` (0 s): conclude after this many answers, or this long after the last one |
 | skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) |
 | sensor | `simulated` | `name`, `min`, `max`, `unit`, `step`, `interval`, `description`, `start` |
 | sensor | `command` | `name`, `command`, `unit`, `interval`, `description`, `timeout` (10) |

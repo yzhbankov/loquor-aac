@@ -195,8 +195,8 @@ LLM JSON {trigger, input, reason} ──▶ TriggerHub.propose() validates ─�
 ```
 
 Skills that use them: `llm_answer` with `"sensors": [...]` puts the readings
-at `{sensors}` in its prompt; `goal` with `"triggers": [...]` proposes and
-fires one with its conclusion; `sensor_report` answers
+at `{sensors}` in its prompt; `goal` gathers answers from one or many peers (`min_answers`, `settle`) and,
+with `"triggers": [...]`, proposes and fires one with its conclusion; `sensor_report` answers
 `{"sensor"?}` → `{"readings": {...}}` so peers get numbers, not prose.
 
 ### Skill and Context — `agent/skill.py`, `agent/context.py`
