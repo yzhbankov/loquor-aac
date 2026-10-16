@@ -6,7 +6,8 @@ A subset of the A2A Agent Card, CBOR-encoded, without the web-only fields
     {
       "name": str, "description": str, "version": str,
       "skills": [{"id": str, "name": str, "description": str, "tags": [str],
-                  "input_schema": {...}, "output_schema": {...}, "min_trust": 0}],
+                  "input_schema": {...}, "output_schema": {...}, "min_trust": 0,
+                  "triggers": {name: {"description": str, "input_schema": {...}}}}],  # actions a peer may fire
       "llm": {"model": str, "context_window": int, "modalities": [str]},
       "extensions": [int],          # envelope types this agent understands beyond 1-4
       "relay": bool                 # stores and forwards envelopes for others
@@ -77,11 +78,13 @@ def skill_entry(
     input_schema: dict | None = None,
     output_schema: dict | None = None,
     min_trust: int = 0,
+    extra: dict[str, Any] | None = None,  # skill-specific keys, e.g. "triggers" (offer_triggers)
 ) -> dict[str, Any]:
     return _clean({
         "id": id, "name": name or id, "description": description, "tags": tags or [],
         "input_schema": input_schema, "output_schema": output_schema,
         "min_trust": int(min_trust) or None,  # 0 is the default and is omitted
+        **(extra or {}),
     })
 
 

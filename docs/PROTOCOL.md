@@ -191,7 +191,7 @@ web-only fields (no endpoint URL, no OAuth):
 ```
 {
   "name": str, "description": str, "version": str,
-  "skills": [ { "id": str, "name": str, "description": str, "tags": [str],
+  "skills": [ { "id": str, "name": str, "description": str, "tags": [str],   // + "triggers": {name: {description, input_schema}} on a fire_trigger entry
                 "input_schema": {...}, "output_schema": {...}, "min_trust": uint } ],
   "llm":    { "model": str, "context_window": uint, "modalities": [str] },
   "extensions": [uint]

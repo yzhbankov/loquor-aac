@@ -61,7 +61,10 @@ def describe(agent: Agent) -> list[str]:
         if getattr(skill, "triggers", ()):
             uses.append(f"triggers {list(skill.triggers)}")
         what = f"capability {skill.capability!r}" if skill.capability else f"goal {getattr(skill, 'goal', '')!r}"
-        lines.append(f"    - {kind}: {what}" + (f", uses {', '.join(uses)}" if uses else ""))
+        line = f"    - {kind}: {what}" + (f", uses {', '.join(uses)}" if uses else "")
+        if hasattr(skill, "offered"):
+            line += f", offers triggers {skill.offered(agent.triggers)} to peers (min_trust {skill.min_trust})"
+        lines.append(line)
     lines.append(f"  sensors    : {', '.join(agent.sensors.names()) or 'none'}")
     lines.append(f"  triggers   : {', '.join(agent.triggers.names()) or 'none'}")
     return lines

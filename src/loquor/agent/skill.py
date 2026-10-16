@@ -45,6 +45,15 @@ class Skill:
         """Answer one request. Raise to send the requester an error."""
         raise NotImplementedError(f"{type(self).__name__} does not answer requests")
 
+    def advertise(self, agent: Any) -> dict[str, Any]:
+        """Extra keys for this skill's entry in the capability card (AMP §6).
+
+        Called when the card is built, with the agent, so a skill can list
+        what it exposes — ``offer_triggers`` puts the triggers' names,
+        descriptions and schemas here, and peers read them from the card.
+        """
+        return {}
+
     async def run(self, ctx: Context) -> None:
         """Optional background loop; cancelled when the agent stops."""
 

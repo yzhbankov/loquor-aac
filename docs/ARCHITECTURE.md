@@ -85,7 +85,8 @@ src/loquor/
 ├── sensors/      base.py (Sensor, Reading, FunctionSensor) · builtin.py (simulated, command)
 ├── triggers/     base.py (Trigger, FunctionTrigger) · builtin.py (console, command)
 ├── agent/        agent.py · tracker.py · context.py · skill.py · sensors.py · triggers.py
-│                 skills/{llm_answer,goal,collect,sensor_report}.py
+│                 remote.py (a peer's trigger as a local one)
+│                 skills/{llm_answer,goal,collect,sensor_report,offer_triggers}.py
 ├── settings.py   device config: ~/.loquor/config.json (transport · model · beacon interval · logging)
 ├── config.py     profile JSON → objects ("type" lookup) · profile.schema.json
 ├── tools/        doctor.py · check.py · scaffold.py (init) · status.py · service.py
@@ -315,14 +316,21 @@ The agent stays unaware of them; they read what it exposes:
 Nothing in the protocol distinguishes them; the profile does. An
 **agent** has a reasoner. A **node** has none (reasoner `none`, chosen
 automatically when no skill's `needs_reasoner` is true) and offers only
-data skills, in practice `sensor_report`. Both beacon, handshake and
+data and action skills: `sensor_report` (its readings) and
+`offer_triggers` (its triggers, listed in the card under the skill
+entry's `triggers` key via `Skill.advertise`). Both beacon, handshake and
 encrypt the same way; a node's capability card simply has no `llm`
 entry. The `collect` skill is the agent-side counterpart: it pulls
 `sensor_report` from every node each round — structured readings in an
-envelope addressed to the collector, no model on the node — and reasons
-over the table once. This keeps the LLM where decisions are made and
-lets the smallest boards join the mesh; a microcontroller firmware would
-implement beacon, HELLO and `sensor_report` and nothing else.
+envelope addressed to the collector, no model on the node — mirrors the
+nodes' offered triggers into its own hub as `RemoteTrigger`s
+(`agent/remote.py`, named `<node>:<trigger>`), and reasons over the
+table once. A proposal for a remote trigger is validated by the agent's
+hub, carried as a `fire_trigger` request, validated again by the node's
+hub and fired there. This keeps the LLM where decisions are made and lets
+the smallest boards join the mesh; a microcontroller firmware would
+implement beacon, HELLO, `sensor_report` and `fire_trigger` and nothing
+else.
 
 ## What is deliberately not here
 

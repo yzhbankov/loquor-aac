@@ -15,6 +15,13 @@ this agent's own sensors and completes the goal; with ``triggers`` it may
 propose one of them, validated by the trigger hub, and fire it. Without a
 goal it only collects (and needs no LLM itself).
 
+Nodes that run ``offer_triggers`` advertise actions; with
+``remote_triggers`` on (the default) those appear in this agent's trigger
+hub as ``<node>:<trigger>`` and the LLM may propose them like local ones
+— the proposal is validated here, sent to the node, validated there, and
+fired. So a controller can water through a valve on the tank node without
+owning a relay itself.
+
 Other agents can ask this one for the whole table through the
 ``collected_readings`` capability.
 """
@@ -27,6 +34,8 @@ import time
 from typing import Any
 
 from loquor.agent.context import Context
+from loquor.agent.remote import CAPABILITY as FIRE_TRIGGER
+from loquor.agent.remote import RemoteTrigger, remote_name, remote_triggers_of
 from loquor.agent.skill import Skill, with_sensors
 from loquor.agent.tracker import RequestError
 from loquor.protocol.discovery import Peer
@@ -42,7 +51,7 @@ class Collect(Skill):
     def __init__(self, interval: float = 30.0, capability: str = "sensor_report",
                  peers: list[str] | None = None, goal: str = "", system_prompt: str = "",
                  temperature: float = 0.2, triggers: list[str] | None = None,
-                 sensors: list[str] | None = None, min_nodes: int = 1):
+                 sensors: list[str] | None = None, min_nodes: int = 1, remote_triggers: bool = True):
         self.interval = interval
         self.ask_capability = capability
         self.peers = tuple(peers or ())  # node names to accept; () = every peer offering the capability
@@ -52,8 +61,10 @@ class Collect(Skill):
         self.triggers = tuple(triggers or ())
         self.sensors = tuple(sensors or ())  # own sensors to put beside the nodes' readings
         self.min_nodes = max(1, min_nodes)
+        self.remote_triggers = remote_triggers
         self.needs_reasoner = bool(goal)
         self.collected: dict[str, dict[str, Any]] = {}  # node uid -> {name, at, readings}
+        self.remote: dict[str, str] = {}  # hub name -> peer uid, for the triggers discovered on nodes
         self.rounds = 0
         self.assessment: str | None = None
         self.collected_event = asyncio.Event()  # set after every round, for tests and skills
@@ -68,6 +79,8 @@ class Collect(Skill):
     async def run(self, ctx: Context) -> None:
         while True:
             nodes = [p for p in ctx.peers(self.ask_capability) if self._accepts(p)]
+            if self.remote_triggers:
+                self._discover_triggers(ctx)
             if nodes:
                 await asyncio.gather(*(self._pull(peer, ctx) for peer in nodes))
                 self.rounds += 1
@@ -83,6 +96,28 @@ class Collect(Skill):
 
     def _accepts(self, peer: Peer) -> bool:
         return not self.peers or peer.name in self.peers or peer.uid in self.peers
+
+    def _discover_triggers(self, ctx: Context) -> None:
+        """Mirror the triggers of every accepted peer that offers them; drop those of peers gone."""
+        wanted: dict[str, tuple[Peer, str, dict[str, Any]]] = {}
+        for peer in ctx.peers(FIRE_TRIGGER):
+            if self._accepts(peer):
+                for trigger, spec in remote_triggers_of(peer).items():
+                    wanted[remote_name(peer, trigger)] = (peer, trigger, spec)
+        for name in list(self.remote):
+            if name not in wanted:
+                ctx.triggers.remove(name)
+                del self.remote[name]
+                ctx.log("trigger %s is gone", name)
+        for name, (peer, trigger, spec) in wanted.items():
+            if name in self.remote or name in ctx.triggers:
+                continue
+            ctx.triggers.add(RemoteTrigger(peer, trigger, spec["description"], spec["input_schema"], ctx))
+            self.remote[name] = peer.uid
+            ctx.log("%s offers trigger %s: %s", peer.label, name, spec["description"])
+
+    def allowed_triggers(self) -> list[str]:
+        return [*self.triggers, *self.remote]
 
     async def _pull(self, peer: Peer, ctx: Context) -> None:
         try:
@@ -106,12 +141,13 @@ class Collect(Skill):
             own = await ctx.sensors.readings(self.sensors)
             system = with_sensors(system, ctx.sensors.describe(own))
         situation = f"Your goal: {self.goal}\n\nReadings from the sensor nodes in range:\n{table}"
-        if self.triggers:
+        allowed = self.allowed_triggers()
+        if allowed:
             proposal = await ctx.triggers.propose(
                 system=system,
                 situation=situation + "\n\nDecide whether to act now with one of the available triggers, "
                                       "filling its input from the readings, or choose null if nothing is needed.",
-                allowed=self.triggers, temperature=self.temperature,
+                allowed=allowed, temperature=self.temperature,
             )
             self.assessment = proposal.reason
             if not proposal:

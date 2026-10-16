@@ -95,8 +95,12 @@ def test_demo_profiles_build_and_check(home):
     assert nodes[0].sensors.names() == ["soil_moisture", "soil_temperature"]
     controller = build_agent(load_profile(DEMO / "controller.json"), base_dir=DEMO, settings=Settings(model="m"))
     (collect,) = controller.skills
-    assert isinstance(collect, Collect) and collect.triggers == ("pump", "vent") and collect.needs_reasoner
-    assert "greenhouse" in collect.system_prompt and controller.triggers.names() == ["pump", "vent"]
+    assert isinstance(collect, Collect) and collect.triggers == ("vent",) and collect.needs_reasoner
+    assert "greenhouse" in collect.system_prompt and controller.triggers.names() == ["vent"]
+    # the tank node offers its valve in its card; the controller will fire it remotely
+    tank = nodes[2]
+    (entry,) = [s for s in tank.card().skills if s["id"] == "fire_trigger"]
+    assert list(entry["triggers"]) == ["valve"] and entry["triggers"]["valve"]["input_schema"]["required"] == ["seconds"]
 
 
 async def test_check_reports_a_node_as_such():
@@ -176,9 +180,9 @@ async def test_collect_without_goal_only_collects_and_filters_peers(home):
 
 async def test_node_scaffold_doctor_and_settings(tmp_path, home):
     written = scaffold.init(tmp_path / "barn", node=True)
-    assert [p.name for p in written] == ["agent.json", "sensors.py", "README.md"]
+    assert [p.name for p in written] == ["agent.json", "sensors.py", "triggers.py", "README.md"]
     profile = json.loads((tmp_path / "barn" / "agent.json").read_text())
-    assert profile["skills"] == [{"type": "sensor_report"}] and "triggers" not in profile
+    assert [s["type"] for s in profile["skills"]] == ["sensor_report", "offer_triggers"] and "prompt.txt" not in str(written)
     lines, checks = await check_profile(tmp_path / "barn" / "agent.json", Settings(), transport="localhost")
     assert all(c.ok for c in checks) and any("node (no LLM)" in line for line in lines)
 
@@ -190,3 +194,92 @@ async def test_node_scaffold_doctor_and_settings(tmp_path, home):
     ollama = next(c for c in checks if c.name == "ollama")
     assert ollama.state == "ok" and "sensor node" in ollama.detail
     assert "sensor node, no LLM" in next(c for c in checks if c.name == "device config").detail
+
+
+# ------------------------------------------------------- remote triggers
+
+
+class Valve(Trigger):
+    name, description = "valve", "Open the irrigation valve for some seconds."
+    input_schema = {"type": "object", "properties": {"seconds": {"type": "integer", "minimum": 5}}, "required": ["seconds"]}
+
+    def __init__(self):
+        self.opened = []
+
+    async def fire(self, input):
+        self.opened.append(input["seconds"])
+        return {"opened_for_s": input["seconds"]}
+
+
+class ValveBrain(Reasoner):
+    """Proposes the tank node's valve by its remote name when the soil is dry."""
+
+    name = "scripted"
+
+    def __init__(self):
+        self.prompts = []
+
+    async def complete(self, system, prompt, *, temperature=None, schema=None):
+        self.prompts.append(prompt)
+        if "soil_moisture=22" in prompt and "tank-node:valve" in prompt:
+            return json.dumps({"trigger": "tank-node:valve", "input": {"seconds": 20}, "reason": "dry soil, water via the tank"})
+        return json.dumps({"trigger": None, "input": {}, "reason": "nothing to do"})
+
+
+async def test_node_offers_a_trigger_and_the_controller_fires_it_remotely(home):
+    from loquor.agent.skills import OfferTriggers
+    from loquor.triggers import TriggerError
+
+    hub = MemoryHub()
+    valve = Valve()
+    tank = Agent(name="Tank Node", description="tank", skills=[SensorReport(), OfferTriggers()], reasoner=NoReasoner(),
+                 transport=hub.transport(), identity=Identity.generate(), beacon_interval=0.05,
+                 sensors=[FunctionSensor(lambda: 60, name="water_level", unit="%")], triggers=[valve])
+    soil = node("Soil Node", hub, soil_moisture=22)
+    brain = ValveBrain()
+    collect = Collect(interval=0.2, goal="water when dry", system_prompt="s", min_nodes=2)
+    controller = Agent(name="Controller", description="d", skills=[collect], reasoner=brain, transport=hub.transport(),
+                       identity=Identity.generate(), beacon_interval=0.05, request_timeout=1.0)
+    for a in (tank, soil, controller):
+        await a.start()
+    try:
+        async def watered():
+            while not valve.opened:
+                await asyncio.sleep(0.02)
+        await asyncio.wait_for(watered(), 3.0)
+        # the node's valve showed up in the controller's hub under the node's name, with the node's schema
+        assert "tank-node:valve" in controller.triggers and collect.remote == {"tank-node:valve": tank.agent_id.hex()}
+        remote = controller.triggers.get("tank-node:valve")
+        assert remote.description == "Open the irrigation valve for some seconds. (on Tank Node)"
+        assert "tank-node:valve" in brain.prompts[-1] and "Open the irrigation valve" in brain.prompts[-1]
+        # validated here, sent to the node, validated there, fired there
+        assert valve.opened == [20] and tank.triggers.history[-1]["result"] == {"opened_for_s": 20}
+        assert controller.triggers.history[-1]["result"] == {"opened_for_s": 20}
+        # the node refuses what its schema or its offer does not allow
+        with pytest.raises(TriggerError, match="invalid input for tank-node:valve"):  # caught here, never sent
+            await controller.triggers.fire("tank-node:valve", {"seconds": 1})
+        remote.input_schema = {"type": "object"}  # a lax copy here still meets the node's own check
+        with pytest.raises(TriggerError, match="refused valve: .*invalid input"):
+            await controller.triggers.fire("tank-node:valve", {"seconds": 1})
+        peer = controller.node.peers.get(tank.agent_id)
+        with pytest.raises(Exception, match="no such trigger"):
+            await controller.context.ask(peer, "fire_trigger", {"trigger": "nuke", "input": {}})
+        # a node without offer_triggers advertises nothing
+        assert not any(n.startswith("soil-node:") for n in controller.triggers.names())
+        # status lists the remote trigger with the local ones
+        assert "tank-node:valve" in snapshot(controller)["triggers"]["names"]
+    finally:
+        for a in (tank, soil, controller):
+            await a.stop()
+
+
+def test_offer_triggers_only_lists_what_it_is_told_to():
+    from loquor.agent.skills import OfferTriggers
+
+    agent = Agent(name="N", description="d", skills=[OfferTriggers(triggers=["valve"], min_trust=1)], reasoner=NoReasoner(),
+                  transport=MemoryHub().transport(), identity=Identity.generate(), triggers=[Valve(), Pump()])
+    (entry,) = agent.card().skills
+    assert entry["min_trust"] == 1 and list(entry["triggers"]) == ["valve"]
+    with pytest.raises(ValueError, match=r"uses triggers \['lamp'\]"):
+        Agent(name="N", description="d", skills=[OfferTriggers(triggers=["lamp"])], reasoner=NoReasoner(),
+              transport=MemoryHub().transport(), identity=Identity.generate(), triggers=[Valve()])

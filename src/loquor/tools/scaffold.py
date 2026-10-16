@@ -163,16 +163,53 @@ Reference: `docs/USAGE.md` (profile fields, commands) and `docs/DEVELOPMENT.md`
 NODE_PROFILE = """{{
   "$schema": "{schema}",
   "name": "{name}",
-  "description": "I am {name}, a sensor node. I measure the load and temperature at my device and report the numbers to any agent that asks.",
+  "description": "I am {name}, a sensor node. I measure the load and temperature at my device, report the numbers to any agent that asks, and can switch my relay when told to.",
   "sensors": [
     {{ "type": "sensors.py:load_average", "name": "load", "interval": 10 }},
     {{ "type": "sensors.py:Thermometer", "name": "temperature", "interval": 10 }}
   ],
+  "triggers": [
+    {{ "type": "triggers.py:Relay" }}
+  ],
   "skills": [
-    {{ "type": "sensor_report" }}
+    {{ "type": "sensor_report" }},
+    {{ "type": "offer_triggers", "min_trust": 0 }}
   ]
 }}
 """
+
+NODE_TRIGGERS = '''"""Triggers for {name}: what this node can do when an agent tells it to.
+
+A node has no LLM. It *offers* its triggers in its capability card (the
+``offer_triggers`` skill in ``agent.json``); an agent in range shows them
+to its own LLM next to its own triggers, and when it decides to use one it
+sends ``fire_trigger`` here. The input is validated against
+``input_schema`` on both sides before ``fire()`` runs.
+
+``"min_trust": 0`` in ``agent.json`` lets any agent in range fire them —
+fine for a demo. For a real actuator set it to 1 and pin the controller's
+key in ``~/.loquor/pinned_keys.json`` so only that agent can.
+"""
+
+from __future__ import annotations
+
+from loquor.triggers import Trigger
+
+
+class Relay(Trigger):
+    name = "relay"
+    description = "Switch the relay on this device on or off, for example a lamp, a fan or a valve."
+    input_schema = {{
+        "type": "object",
+        "properties": {{"on": {{"type": "boolean"}}}},
+        "required": ["on"],
+    }}
+
+    async def fire(self, input):
+        # Drive your hardware here (GPIO, serial, HTTP…). ``input`` is already valid.
+        print(f"[RELAY] {{'ON' if input['on'] else 'OFF'}}", flush=True)
+        return {{"on": input["on"]}}
+'''
 
 NODE_README = """# {name}
 
@@ -184,8 +221,9 @@ readings as data. No Ollama, no model: a Raspberry Pi Zero is enough
 
 | file | what it is |
 |---|---|
-| `agent.json` | the profile: the node's name, description and sensors |
+| `agent.json` | the profile: the node's name, description, sensors and the triggers it offers |
 | `sensors.py` | what it measures: a function and a class, both runnable as they are |
+| `triggers.py` | what it can do when an agent tells it to: one relay, offered through `offer_triggers` |
 
 ```bash
 loquor check {dir}/agent.json     # loads everything and reads each sensor once
@@ -200,11 +238,14 @@ Next steps:
    `{{ "type": "command", "name": "cpu_temp", "command": "vcgencmd measure_temp | tr -dc '0-9.'", "unit": "°C", "interval": 10 }}`.
 2. **Say what you measure** in `description`: the agents that find this
    node read it to decide whether your numbers are what they need.
-3. **Point an agent at it**: on a device with an LLM, a profile with
-   `{{ "type": "collect", "interval": 30, "goal": "…", "triggers": [...] }}`
-   pulls the readings from every node in range and acts on them
-   (`loquor init` writes an agent; see `demo/greenhouse` for a complete one).
-4. **Keep it running**: `loquor service install {dir}/agent.json --now`.
+3. **Drive your own hardware** in `triggers.py` (`Relay.fire`), and say
+   in its `description` when it should be used: the agent's LLM reads it.
+4. **Point an agent at it**: on a device with an LLM, a profile with
+   `{{ "type": "collect", "interval": 30, "goal": "…" }}` pulls the readings
+   from every node in range and may fire this node's relay as
+   `<node-name>:relay` (`loquor init` writes an agent; `demo/greenhouse`
+   is a complete one).
+5. **Keep it running**: `loquor service install {dir}/agent.json --now`.
 
 Reference: `docs/USAGE.md`.
 """
@@ -220,6 +261,7 @@ def init(directory: Path, name: str | None = None, *, force: bool = False, node:
         files = {
             "agent.json": NODE_PROFILE.format(schema=SCHEMA_URL, name=name),
             "sensors.py": SENSORS.format(name=name),
+            "triggers.py": NODE_TRIGGERS.format(name=name),
             "README.md": NODE_README.format(name=name, dir=shown),
         }
     else:

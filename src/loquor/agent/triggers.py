@@ -57,6 +57,17 @@ class TriggerHub:
     def names(self) -> list[str]:
         return list(self._triggers)
 
+    def add(self, trigger: Trigger) -> None:
+        """Register a trigger at runtime (a peer's, discovered on the mesh)."""
+        if not trigger.name:
+            raise ValueError(f"trigger {type(trigger).__name__} has no name")
+        if trigger.name in self._triggers:
+            raise ValueError(f"two triggers named {trigger.name!r}")
+        self._triggers[trigger.name] = trigger
+
+    def remove(self, name: str) -> None:
+        self._triggers.pop(name, None)
+
     def __contains__(self, name: object) -> bool:
         return name in self._triggers
 

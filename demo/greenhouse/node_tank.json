@@ -1,10 +1,19 @@
 {
   "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
   "name": "Tank Node",
-  "description": "I am a sensor node on the irrigation water tank. I measure the water level in percent.",
+  "description": "I am a sensor node on the irrigation water tank. I measure the water level in percent and can open the irrigation valve when told to.",
   "sensors": [
     { "type": "simulated", "name": "water_level", "min": 0, "max": 100, "start": 62, "step": 2, "unit": "%", "interval": 5,
-      "description": "Water left in the irrigation tank; the pump must not run below 10 %." }
+      "description": "Water left in the irrigation tank; the valve must not open below 10 %." }
   ],
-  "skills": [ { "type": "sensor_report" } ]
+  "triggers": [
+    { "type": "console", "name": "valve",
+      "description": "Open the irrigation valve for a number of seconds to water the beds. Use it when soil moisture is low and the tank has water.",
+      "input_schema": { "type": "object", "properties": { "seconds": { "type": "integer", "minimum": 5, "maximum": 120 } }, "required": ["seconds"] },
+      "template": "\n💧  VALVE OPEN for {seconds} s\n" }
+  ],
+  "skills": [
+    { "type": "sensor_report" },
+    { "type": "offer_triggers", "min_trust": 0 }
+  ]
 }

@@ -116,16 +116,18 @@ class Pump(Trigger):
 once and tells you what is wrong before anything goes on the air.
 
 **Two roles.** Put an LLM where a decision is made; put a **node** where
-something is only measured. A node is a profile with sensors and the
-`sensor_report` skill: it runs the same protocol (beacons, handshake,
-encryption) and answers with numbers, not prose. An agent with the
-`collect` skill pulls every node's readings each round, reasons over the
-table once, and fires a trigger if the readings call for it:
+something is measured or switched. A node is a profile with sensors, the
+`sensor_report` skill and, if it can act, triggers plus `offer_triggers`:
+it runs the same protocol (beacons, handshake, encryption), answers with
+numbers, not prose, and advertises its triggers in its capability card.
+An agent with the `collect` skill pulls every node's readings each round,
+reasons over the table once, and fires a trigger if the readings call
+for it — its own, or one on a node (`tank-node:valve`), validated on both
+sides:
 
 ```json
 { "type": "collect", "interval": 30,
-  "goal": "Keep soil moisture above 30 %; water only if the tank is above 10 %.",
-  "triggers": ["pump"] }
+  "goal": "Keep soil moisture above 30 %; water through the tank node's valve, only if the tank is above 10 %." }
 ```
 
 **The LLM's behaviour** is `prompt.txt` (its persona; `{sensors}` is
@@ -162,7 +164,7 @@ print to the terminal instead of driving a display or a relay.
 |---|---|---|
 | [**Weather & Clothes**](demo/weather_and_clothes/README.md) | two agents: a weather station with a sensor, and an advisor that finds it, asks for the forecast and shows an outfit card | 1 sensor, 1 trigger, 2 profiles |
 | [**Emergency Triage**](demo/triage/README.md) | three triage chairs measuring patients, and a nurse's device that asks all of them, decides whom to see first and shows the board | 1 sensor, 1 trigger, 4 profiles |
-| [**Greenhouse**](demo/greenhouse/README.md) | three sensor **nodes** with no LLM, and one controller that collects their readings every 15 s, waters and vents | 0 sensors to write, 2 triggers, 4 profiles |
+| [**Greenhouse**](demo/greenhouse/README.md) | three sensor **nodes** with no LLM, one with a valve it offers, and one controller that collects their readings every 15 s, waters through the node's valve and vents | 0 sensors to write, 1 trigger, 4 profiles |
 
 ```bash
 # weather & clothes: two terminals on one computer (the default transport is localhost)
@@ -219,7 +221,7 @@ Five layers, one small interface each. Lower layers never import upper ones.
 ```
  ~/.loquor/config.json  (this device: transport · model · beacon interval · logging)
  my_agent/agent.json ──▶ agent      dispatches requests to skills; hubs for sensors and triggers
-                          ├─ skills     business logic: llm_answer · goal · collect · sensor_report · yours
+                          ├─ skills     business logic: llm_answer · goal · collect · sensor_report · offer_triggers · yours
                           ├─ sensors    drivers that produce readings            (yours: one class)
                           ├─ triggers   drivers that perform actions             (yours: one class)
                           ├─ reasoning  the LLM behind one method                (Ollama · none · template · tracing)
@@ -236,7 +238,7 @@ reasons behind them: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest            # 117 tests, no model, network or radio needed, ~5 s
+python -m pytest            # 119 tests, no model, network or radio needed, ~5 s
 ```
 
 ## Documentation map
@@ -258,7 +260,7 @@ python -m pytest            # 117 tests, no model, network or radio needed, ~5 s
 |---|---|
 | AMP v1: persisted identity, signed CBOR envelopes, beacons, handshake, encryption, acknowledgements, visibility policies | Session transports (bulk data over TCP / L2CAP) |
 | Extensions: capability queries, session negotiation, relay store-and-forward, trust levels with pinned keys | Pairing ceremony (QR / fingerprint) from the CLI |
-| Sensors and triggers with schema-validated LLM proposals; `goal` skill that gathers from many peers; `collect` skill and LLM-free sensor nodes | A reference node firmware for microcontrollers (ESP32) |
+| Sensors and triggers with schema-validated LLM proposals; `goal` skill that gathers from many peers; `collect` skill; LLM-free nodes that report readings and offer triggers | A reference node firmware for microcontrollers (ESP32) |
 | Wi-Fi and Bluetooth transports, verified between a Mac and an Ubuntu laptop | UWB proximity; relay gossip message |
 | One-script install, `loquor` CLI with doctor / init / check / status / trace, device config, boot service | A PyPI release |
 

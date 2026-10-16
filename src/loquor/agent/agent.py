@@ -117,7 +117,7 @@ class Agent:
             description=self.description,
             skills=[
                 skill_entry(s.capability, description=s.description, input_schema=s.input_schema,
-                            output_schema=s.output_schema, min_trust=s.min_trust)
+                            output_schema=s.output_schema, min_trust=s.min_trust, extra=s.advertise(self))
                 for s in self._handlers.values()
             ],
             llm=llm,

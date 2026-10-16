@@ -189,8 +189,9 @@ and trigger types may be plain functions. Skills may use
 |---|---|---|
 | skill | `llm_answer` | `capability`, `system_prompt`, `temperature` (0.2), `sensors` ([names]), `max_chars` (3000) — answers `{question}` with `{answer}`, grounded in the named sensors |
 | skill | `goal` | `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]), `min_answers` (1), `settle` (0 s) — finds peers that can help, asks them, concludes, proposes one of its triggers |
-| skill | `collect` | `interval` (30 s), `capability` (`sensor_report`), `peers` ([node names]; default all), `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]), `sensors` ([own names]), `min_nodes` (1) — pulls every node's readings each round; with a `goal` reasons over the table once per round and may fire a trigger; offers the table as `collected_readings` |
-| skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) — the readings as data, for peers that want numbers; the only skill a **node** needs |
+| skill | `collect` | `interval` (30 s), `capability` (`sensor_report`), `peers` ([node names]; default all), `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([own names]), `remote_triggers` (true), `sensors` ([own names]), `min_nodes` (1) — pulls every node's readings each round; with a `goal` reasons over the table once per round and may fire one of its own triggers or a node's (`<node>:<trigger>`); offers the table as `collected_readings` |
+| skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) — the readings as data, for peers that want numbers; what a **node** offers |
+| skill | `offer_triggers` | `triggers` ([names]; default all), `min_trust` (0) — lets peers fire this device's triggers: they are listed in the capability card and fired on a validated `fire_trigger` request; a node that acts |
 | sensor | `simulated` | `name`, `min`, `max`, `unit`, `step`, `interval`, `description`, `start` |
 | sensor | `command` | `name`, `command`, `unit`, `interval`, `description`, `timeout` (10) — stdout is the value: JSON, a number, or text |
 | trigger | `console` | `name` (`print`), `description`, `input_schema` (`{text}`), `template` |
@@ -209,13 +210,23 @@ the whole protocol and answers requests with data. `loquor init --node`
 writes one; `./install.sh --node` prepares a device for one (and sets
 `llm false` so `doctor` stops asking for Ollama).
 
+A node can also **act**. Give it triggers and the `offer_triggers`
+skill, and it lists them — name, description, input schema — in its
+capability card. An agent that meets the node sees them in its own
+trigger hub as `<node>:<trigger>` (`tank-node:valve`), its LLM may propose
+them like local ones, and the proposal is validated on the agent, sent
+as a `fire_trigger` request, validated again on the node and fired there.
+`min_trust` on `offer_triggers` says who may: 0 is anyone in range
+(demos); 1 with the controller's key pinned is what a real valve wants.
+
 An **agent** with the `collect` skill pulls readings from every node in
 range: each round it sends `sensor_report` to each node and receives
 `{"readings": {name: {value, unit, at}}}` in an encrypted envelope
 addressed to it — no model on the node, no prose in between. With a
 `goal` it then thinks once per round over the table of all nodes' readings
-and its own sensors, and may fire one of its `triggers`. `loquor status`
-shows the table; `loquor trace` the prompt it was turned into.
+and its own sensors, and may fire one of its own `triggers` or one a node
+offers. `loquor status` shows the table and every trigger it can reach;
+`loquor trace` the prompt it was turned into.
 
 ### The LLM's behaviour
 
@@ -258,6 +269,7 @@ The default log is the agent's story, one line per event:
 | `asking … for …` / `… answered:` | a request this agent sent and what came back |
 | `LLM  1.8 s  … -> …` | one model call: duration, prompt start, reply start (`loquor trace` has the whole thing) |
 | `reasoning about …` | the `goal` skill deciding whether a peer can help |
+| `… offers trigger tank-node:valve: …` | a node's trigger was discovered and added to this agent's hub |
 | `collected from …: …` | the `collect` skill received a node's readings as data |
 | `round N: …` | the `collect` skill's decision for that round: an action, or why none |
 | `firing …` / `TRIGGER …` | a validated proposal; the trigger ran, with its input and result |
