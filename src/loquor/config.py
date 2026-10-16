@@ -8,13 +8,8 @@ keyword arguments::
     {
       "name": "Weather Station",
       "description": "I report tomorrow's weather.",
-      "system_prompt": "You are ...",                    # default for skills that take one
+      "system_prompt_file": "prompt.txt",                 # or "system_prompt": "You are ..."
       "visibility": "visible",                            # visible | quiet | silent
-      "key_file": "~/.loquor/keys/weather.key",           # default: derived from the name
-      "pinned_keys": "~/.loquor/pinned_keys.json",        # level-1 trust store (default shown)
-      "relay": false,                                     # store-and-forward for others
-      "transport": {"type": "wifi"},                      # default: localhost
-      "reasoner":  {"type": "ollama", "model": "qwen2.5:3b"},
       "sensors":  [{"type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5}],
       "triggers": [{"type": "console", "name": "print"}],
       "skills": [
@@ -23,6 +18,11 @@ keyword arguments::
       ]
     }
 
+Transport, model and beacon interval come from the device config
+(:mod:`loquor.settings`) unless the profile pins them (``"transport"``,
+``"reasoner"``, ``"beacon_interval"``) or the command line overrides them.
+The full list of fields is ``profile.schema.json`` next to this module.
+
 Sensors and triggers may also be plain functions; they are wrapped
 automatically. That ``"type"`` lookup is the whole extension mechanism.
 """
@@ -30,14 +30,16 @@ automatically. That ``"type"`` lookup is the whole extension mechanism.
 from __future__ import annotations
 
 import importlib
+import importlib.resources
 import importlib.util
 import inspect
 import json
-import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import jsonschema
 
 from loquor.agent.agent import Agent
 from loquor.agent.skills import BUILTIN_SKILLS
@@ -45,22 +47,35 @@ from loquor.protocol.discovery import Visibility, slug
 from loquor.protocol.identity import Identity
 from loquor.reasoning import OllamaReasoner, TemplateReasoner
 from loquor.sensors import BUILTIN_SENSORS, FunctionSensor
+from loquor.settings import Settings, loquor_home
 from loquor.transports import TRANSPORTS, make_transport
 from loquor.triggers import BUILTIN_TRIGGERS, FunctionTrigger
 
 BUILTIN_REASONERS = {"ollama": OllamaReasoner, "template": TemplateReasoner}
 
-PROFILE_FIELDS = {"name", "description", "system_prompt", "visibility", "key_file",
-                  "pinned_keys", "relay", "transport", "reasoner", "sensors", "triggers", "skills"}
 REQUIRED_FIELDS = {"name", "description", "skills"}
 
+__all__ = ["build_agent", "load_profile", "profile_schema", "resolve_type", "instantiate", "loquor_home"]
 
-def loquor_home() -> Path:
-    return Path(os.environ.get("LOQUOR_HOME", Path.home() / ".loquor"))
+
+def profile_schema() -> dict[str, Any]:
+    """The JSON schema every profile must match (``src/loquor/profile.schema.json``)."""
+    text = importlib.resources.files("loquor").joinpath("profile.schema.json").read_text()
+    return json.loads(text)
+
+
+PROFILE_FIELDS = set(profile_schema()["properties"])
 
 
 def load_profile(path: str | Path) -> dict[str, Any]:
-    data = json.loads(Path(path).read_text())
+    """Read and validate a profile. ``*_file`` prompts are read relative to it."""
+    path = Path(path)
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        raise ValueError(f"profile {path} does not exist") from None
+    except ValueError as exc:
+        raise ValueError(f"invalid profile {path}: not valid JSON ({exc})") from None
     if not isinstance(data, dict):
         raise ValueError(f"invalid profile {path}: not a JSON object")
     unknown = sorted(set(data) - PROFILE_FIELDS)
@@ -76,31 +91,70 @@ def load_profile(path: str | Path) -> dict[str, Any]:
     for key in ("sensors", "triggers"):
         if key in data and not isinstance(data[key], list):
             raise ValueError(f"invalid profile {path}: {key} must be a list")
+    try:
+        jsonschema.validate(data, profile_schema())
+    except jsonschema.ValidationError as exc:
+        where = "/".join(str(p) for p in exc.absolute_path) or "profile"
+        raise ValueError(f"invalid profile {path}: {where}: {exc.message}") from None
+    data.pop("$schema", None)
+    _read_prompt_files(data, path.parent)
     return data
+
+
+def _read_prompt_files(data: dict[str, Any], base_dir: Path) -> None:
+    """``system_prompt_file`` (profile or skill) -> ``system_prompt``."""
+    holders = [data, *(s for s in data["skills"] if isinstance(s, dict))]
+    for holder in holders:
+        file = holder.pop("system_prompt_file", None)
+        if file is None:
+            continue
+        prompt_path = Path(file).expanduser()
+        if not prompt_path.is_absolute():
+            prompt_path = base_dir / prompt_path
+        try:
+            holder["system_prompt"] = prompt_path.read_text().strip()
+        except OSError as exc:
+            raise ValueError(f"cannot read system_prompt_file {file!r}: {exc}") from None
 
 
 def build_agent(
     profile: dict[str, Any],
     *,
     base_dir: str | Path | None = None,  # where "file.py:Class" types are looked up
+    settings: Settings | None = None,  # device config; loaded from disk if not given
     transport: str | None = None,
     interface: str | None = None,
     model: str | None = None,
     visibility: str | None = None,
     identity: Identity | None = None,
-    beacon_interval: float = 10.0,
+    beacon_interval: float | None = None,
+    wrap_reasoner: Callable[[Any], Any] | None = None,  # e.g. TracingReasoner
 ) -> Agent:
-    """Instantiate every part of a profile. Command-line overrides win."""
+    """Instantiate every part of a profile.
+
+    Precedence for transport, model and beacon interval: the keyword
+    arguments (command line) → the profile → ``settings`` (device config).
+    """
     base_dir = Path(base_dir) if base_dir else None
-    transport_spec = dict(profile.get("transport") or {"type": "localhost"})
+    settings = settings or Settings.load()
+
+    transport_spec = dict(profile.get("transport") or {"type": settings.transport})
     if transport:
         transport_spec["type"] = transport
     if interface:
         transport_spec["interface"] = interface
+    elif settings.interface and "interface" not in transport_spec and transport_spec.get("type") == "wifi":
+        transport_spec["interface"] = settings.interface
 
     reasoner_spec = dict(profile.get("reasoner") or {"type": "ollama"})
+    if reasoner_spec.get("type") == "ollama":
+        reasoner_spec.setdefault("model", settings.model)
+        reasoner_spec.setdefault("base_url", settings.ollama_url)
     if model:
         reasoner_spec["model"] = model
+
+    if beacon_interval is None:
+        beacon_interval = float(profile.get("beacon_interval") or settings.beacon_interval)
 
     skills = [
         instantiate(spec, BUILTIN_SKILLS, "skill", defaults={"system_prompt": profile.get("system_prompt")},
@@ -114,11 +168,14 @@ def build_agent(
     if identity is None:
         key_file = profile.get("key_file") or loquor_home() / "keys" / f"{slug(profile['name']) or 'agent'}.key"
         identity = Identity.load_or_create(Path(key_file).expanduser())
+    reasoner = instantiate(reasoner_spec, BUILTIN_REASONERS, "reasoner", base_dir=base_dir)
+    if wrap_reasoner is not None:
+        reasoner = wrap_reasoner(reasoner)
     return Agent(
         name=profile["name"],
         description=profile["description"],
         skills=skills,
-        reasoner=instantiate(reasoner_spec, BUILTIN_REASONERS, "reasoner", base_dir=base_dir),
+        reasoner=reasoner,
         transport=_build_transport(transport_spec, base_dir),
         identity=identity,
         visibility=Visibility(visibility or profile.get("visibility") or "visible"),

@@ -1,19 +1,22 @@
 # Development
 
-How to set up, test, and extend loquor. Design rationale lives in
-[ARCHITECTURE.md](ARCHITECTURE.md); the wire format in [PROTOCOL.md](PROTOCOL.md).
+How to set up, test, and extend loquor. Using it — the commands, the
+device config, every profile field — is in [USAGE.md](USAGE.md); design
+rationale in [ARCHITECTURE.md](ARCHITECTURE.md); the wire format in
+[PROTOCOL.md](PROTOCOL.md).
 
 ## Setup
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"          # the package, editable, plus pytest
-python -m pytest                 # ~3 s, no model, no network
+./install.sh --no-ollama         # or: python3 -m venv .venv && pip install -e ".[dev,ble]"
+source .venv/bin/activate
+pip install -e ".[dev]"          # pytest
+python -m pytest                 # ~4 s, no model, no network, no radio
 ```
 
-Running an agent from source needs nothing more; `run_agent.py` puts `src/`
-on the path. Ollama is only needed to *run* an agent with an LLM; the tests
-use a scripted reasoner.
+Ollama is only needed to *run* an agent with an LLM; the tests use
+scripted reasoners. `python run_agent.py` runs the CLI from the source
+tree without installing.
 
 Dependencies: `aiohttp` (Ollama client), `cbor2` (envelopes), `pynacl`
 (Ed25519, X25519, ChaCha20-Poly1305 via libsodium), `jsonschema` (the gate
@@ -30,8 +33,10 @@ src/loquor/
 ├── sensors/       Sensor contract + built-ins — import nothing else (drivers)
 ├── triggers/      Trigger contract + built-ins — import nothing else (drivers)
 ├── agent/         orchestrator, skills, Context — imports everything
-├── config.py      profile JSON → objects
-└── cli.py
+├── settings.py    device config (~/.loquor/config.json)
+├── config.py      profile JSON → objects; profile.schema.json beside it
+├── tools/         doctor · check · scaffold (init) · status · service — behind the CLI
+└── cli.py         the `loquor` command
 ```
 
 `tests/test_architecture.py` greps imports and fails the build if a lower
@@ -55,6 +60,10 @@ One file per protocol section plus the agent and config:
 | `test_config.py` | profiles, overrides, `module:Class`, key files |
 | `test_transports.py` | memory hub, multicast round-trip, transport selection |
 | `test_ble.py` | beacon-in-name codec, chunking/reassembly, the BLE transport and a full handshake + exchange over a fake radio |
+| `test_settings.py` | device config: defaults, file, validation, precedence over the profile and under the command line |
+| `test_tools.py` | tracing reasoner, status snapshot and file, doctor, check, init, service units |
+| `test_cli.py` | every `loquor` subcommand short of a real radio or model |
+| `test_demo_triage.py` | the triage demo end to end with a scripted clinician |
 | `test_architecture.py` | the dependency rule |
 
 Patterns worth copying:
@@ -69,45 +78,11 @@ Patterns worth copying:
 
 ## Profile reference
 
-Every field of an agent profile. Only `name`, `description` and `skills`
-are required; `--transport`, `--interface`, `--model` and `--visibility`
-on the command line override the profile.
-
-| field | type | meaning |
-|---|---|---|
-| `name` | str | human-readable name; also the key file name and the log label |
-| `description` | str | one sentence other agents' LLMs read to decide whether you can help |
-| `system_prompt` | str | default persona for every skill that takes a `system_prompt` |
-| `visibility` | `visible` \| `quiet` \| `silent` | beacon and answer policy (PROTOCOL §3); default `visible` |
-| `key_file` | path | Ed25519 seed; default `~/.loquor/keys/<name>.key`, created on first run |
-| `pinned_keys` | path | level-1 trust store; default `~/.loquor/pinned_keys.json` |
-| `relay` | bool | store and forward envelopes for peers out of reach (PROTOCOL §8); default false |
-| `transport` | part | `localhost` (default), `wifi` (`interface` optional), or a custom class |
-| `reasoner` | part | `ollama` (`model`, `base_url`, `temperature`), `template`, or a custom class |
-| `sensors` | [part] | drivers that produce readings; each needs a unique `name` |
-| `triggers` | [part] | drivers that perform actions; each needs a unique `name` |
-| `skills` | [part] | at least one; built-ins below or custom classes |
-
-A *part* is `{"type": T, ...kwargs}` where `T` is a built-in name,
-`"module:Class"` (installed module) or `"file.py:Class"` (path relative to
-the profile). The kwargs are the constructor's; unknown ones fail at
-startup with the constructor's error. Sensor and trigger types may be
-plain functions.
-
-Built-in parts and their arguments:
-
-| part | `type` | arguments |
-|---|---|---|
-| skill | `llm_answer` | `capability`, `system_prompt`, `temperature` (0.2), `sensors` ([names]), `max_chars` (3000) |
-| skill | `goal` | `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]), `min_answers` (1), `settle` (0 s): conclude after this many answers, or this long after the last one |
-| skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) |
-| sensor | `simulated` | `name`, `min`, `max`, `unit`, `step`, `interval`, `description`, `start` |
-| sensor | `command` | `name`, `command`, `unit`, `interval`, `description`, `timeout` (10) |
-| trigger | `console` | `name` (`print`), `description`, `input_schema` (`{text}`), `template` |
-| trigger | `command` | `name`, `command`, `description`, `input_schema`, `timeout` (30) |
-| reasoner | `ollama` | `model` (`qwen2.5:3b` or `$LOQUOR_MODEL`), `base_url`, `temperature` |
-| reasoner | `template` | — |
-| transport | `localhost`, `wifi` | `interface` (wifi), `port` (47600) |
+Every field, every built-in part and its arguments, and the device
+config are in [USAGE.md](USAGE.md#profile). The schema that validates
+profiles is `src/loquor/profile.schema.json`; a change to a profile
+field changes the schema, the table in USAGE.md and `test_config.py`
+in the same PR.
 
 ## Add a skill
 
@@ -348,17 +323,24 @@ class MyLLM(Reasoner):
 `schema` asks for JSON matching a JSON schema; return plain text if you
 can't enforce it — callers validate. Profile: `"reasoner": {"type": "my.llm:MyLLM"}`.
 
-## Logging
+## Logging and tracing
 
 Two loggers:
 
-- `loquor` — the agent's own story: started, met, lost, reasoning, goal.
+- `loquor` — the agent's story: started, met, lost, asks/answered,
+  asking/answered, `LLM` calls, reasoning, `TRIGGER`, goal. This is what a
+  user sees by default; write new lines for a reader who does not know the
+  protocol.
 - `loquor.wire` — one line per envelope (`SEND`/`RECV`/`DROP` + type, ids,
-  size) and one per decrypted body (`BODY request/response`). Beacons and
-  duplicates at DEBUG.
+  size) and one per decrypted body (`BODY request/response`). Off by
+  default; `--wire no-handshake` / `all` or `loquor config set wire …`.
+  Beacons and duplicates at DEBUG (`-v`).
 
-`--wire no-handshake` filters HELLO/HELLO_ACK/ACK; `--wire off` silences
-the wire logger; `-v` sets DEBUG.
+`TracingReasoner` (`reasoning/trace.py`) wraps the reasoner when tracing
+is on and writes every call to `~/.loquor/run/<name>.trace.jsonl`; the
+agent's `StatusWriter` (`tools/status.py`) dumps a snapshot every two
+seconds. If you add state a user would want to see — a new skill's
+progress, a new hub — add it to `snapshot()` and `format_status()`.
 
 ## Conventions
 
@@ -374,7 +356,10 @@ the wire logger; `-v` sets DEBUG.
 
 | path | what |
 |---|---|
+| `~/.loquor/config.json` | device config: transport, model, beacon interval, logging (`settings.py`) |
 | `~/.loquor/keys/<name>.key` | 32-byte Ed25519 seed, mode 0600, created on first run |
 | `~/.loquor/pinned_keys.json` | `{agent_id_hex: public_key_hex}` — level-1 trust |
+| `~/.loquor/run/<name>.json` | a running agent's status snapshot; removed on a clean stop |
+| `~/.loquor/run/<name>.trace.jsonl` | the LLM calls of its last run |
 | `<profile dir>/*.py` | sensors, triggers and skills referenced as `"file.py:Class"` |
 | `$LOQUOR_HOME` | overrides `~/.loquor` (tests use a temp dir) |

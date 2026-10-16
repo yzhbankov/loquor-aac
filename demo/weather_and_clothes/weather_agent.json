@@ -1,18 +1,26 @@
 {
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
   "name": "Weather Forecaster",
   "description": "I am a weather forecaster. I provide weather forecasts: temperature and conditions for today or tomorrow.",
-  "reasoner": { "type": "ollama", "model": "qwen2.5:3b" },
   "sensors": [
-    { "type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5 }
+    {
+      "type": "weather_sensor.py:RandomWeather",
+      "name": "weather",
+      "interval": 5
+    }
   ],
   "skills": [
     {
       "type": "llm_answer",
       "capability": "weather_forecast",
-      "sensors": ["weather"],
+      "sensors": [
+        "weather"
+      ],
       "temperature": 0.3,
-      "system_prompt": "You are the Weather Forecaster agent on an offline local network. Your weather sensor reads:\n{sensors}\nWhen another agent asks about the weather, answer from these readings in one or two short sentences: state the day, the temperature in degrees Celsius and the condition. Do not mention sensors or readings."
+      "system_prompt": "You are the Weather Forecaster agent on an offline local network. Your weather sensor reads:\n{sensors}\nThis reading is your forecast: when another agent asks about the weather for today or tomorrow, answer from it in one or two short sentences, stating the day asked about, the temperature in degrees Celsius and the condition. Never say you lack information. Do not mention sensors or readings."
     },
-    { "type": "sensor_report" }
+    {
+      "type": "sensor_report"
+    }
   ]
 }

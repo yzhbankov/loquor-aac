@@ -45,7 +45,7 @@ def home(tmp_path, monkeypatch):
 def test_demo_profiles_build(home):
     weather = build_agent(load_profile(DEMO / "weather_agent.json"), base_dir=DEMO)
     assert weather.capabilities == ["weather_forecast", "sensor_report"]
-    assert isinstance(weather.reasoner, OllamaReasoner) and weather.reasoner.model == "qwen2.5:3b"
+    assert isinstance(weather.reasoner, OllamaReasoner) and weather.reasoner.model == "qwen2.5:3b"  # device default
     assert isinstance(weather.transport, MulticastTransport) and weather.transport.interface == "127.0.0.1"
     assert weather.sensors.names() == ["weather"] and weather.sensors.get("weather").interval == 5
     assert weather.skills[0].sensors == ("weather",) and isinstance(weather.skills[1], SensorReport)
@@ -83,6 +83,45 @@ def test_profile_validation(tmp_path):
     bad.write_text(json.dumps({"name": "X", "description": "d", "skills": [{"type": "goal"}], "sensors": {}}))
     with pytest.raises(ValueError, match="sensors must be a list"):
         load_profile(bad)
+    # the JSON schema catches wrong types and values with a path to them
+    bad.write_text(json.dumps({"name": "X", "description": "d", "skills": [{"type": "goal"}], "visibility": "loud"}))
+    with pytest.raises(ValueError, match="visibility: 'loud' is not one of"):
+        load_profile(bad)
+    bad.write_text(json.dumps({"name": "X", "description": "d", "skills": [{"capability": "c"}]}))
+    with pytest.raises(ValueError, match="skills/0: 'type' is a required property"):
+        load_profile(bad)
+    bad.write_text(json.dumps({"name": "X", "description": "d", "skills": [{"type": "goal"}], "beacon_interval": 0}))
+    with pytest.raises(ValueError, match="beacon_interval"):
+        load_profile(bad)
+    bad.write_text("{not json")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        load_profile(bad)
+    with pytest.raises(ValueError, match="does not exist"):
+        load_profile(tmp_path / "missing.json")
+    # every demo profile matches the schema, "$schema" included
+    for demo in (DEMO.parent / "triage").glob("*.json"):
+        assert "$schema" not in load_profile(demo)
+
+
+def test_prompt_files_and_profile_level_beacon_interval(tmp_path):
+    (tmp_path / "persona.txt").write_text("You are the station.\n")
+    (tmp_path / "goal.txt").write_text("Pursue it.")
+    profile_path = tmp_path / "agent.json"
+    profile_path.write_text(json.dumps({
+        "name": "Files", "description": "d", "system_prompt_file": "persona.txt", "beacon_interval": 2.5,
+        "reasoner": {"type": "template"},
+        "skills": [{"type": "llm_answer", "capability": "c"},
+                   {"type": "goal", "goal": "g", "system_prompt_file": "goal.txt"}],
+    }))
+    profile = load_profile(profile_path)
+    assert profile["system_prompt"] == "You are the station." and "system_prompt_file" not in profile
+    agent = build_agent(profile, base_dir=tmp_path, identity=Identity.generate())
+    assert agent.skills[0].system_prompt == "You are the station." and agent.skills[1].system_prompt == "Pursue it."
+    assert agent.node.beacon_interval == 2.5
+    profile_path.write_text(json.dumps({"name": "F", "description": "d", "system_prompt_file": "nope.txt",
+                                        "skills": [{"type": "sensor_report"}]}))
+    with pytest.raises(ValueError, match="cannot read system_prompt_file 'nope.txt'"):
+        load_profile(profile_path)
 
 
 def test_custom_types_functions_and_bad_arguments(tmp_path):

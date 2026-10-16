@@ -1,10 +1,7 @@
 {
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
   "name": "Triage Chair 3",
   "description": "I am an automated emergency triage chair. I measure the seated patient's temperature, heart rate, blood pressure and oxygen, ask how they feel, and assess how urgent their case is.",
-  "reasoner": {
-    "type": "ollama",
-    "model": "qwen2.5:3b"
-  },
   "sensors": [
     {
       "type": "patient_simulator.py:PatientMonitor",
