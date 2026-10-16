@@ -53,6 +53,8 @@ DEFAULT_MTU = 185
 MIN_CHUNK = 20
 PEER_TTL = 60.0  # forget a peer not advertised for this long
 STREAM_TTL = 15.0  # drop a half-received envelope after this long
+BACKOFF_BASE = 5.0  # after a failed connect/write, skip broadcasts to that peer for 5, 10, 20 … s
+BACKOFF_MAX = 60.0
 DEFAULT_NAME = "loquor"  # advertised until the first beacon (nodes that never beacon keep it)
 
 
@@ -123,6 +125,10 @@ class Link:
     """One open connection to a peer's inbox."""
 
     mtu: int = DEFAULT_MTU
+
+    @property
+    def alive(self) -> bool:
+        return True
 
     async def write(self, data: bytes) -> None:
         raise NotImplementedError
@@ -268,6 +274,13 @@ class _BleakLink(Link):
             mtu = DEFAULT_MTU
         return cls(client, characteristic, mtu)
 
+    @property
+    def alive(self) -> bool:
+        try:
+            return bool(self.client.is_connected)
+        except Exception:
+            return False
+
     async def write(self, data: bytes) -> None:
         await self.client.write_gatt_char(self.characteristic, data, response=False)
 
@@ -291,6 +304,7 @@ class BleTransport(Transport):
         self._peers: dict[str, tuple[Any, float]] = {}  # key -> (device, last advertised)
         self._links: dict[str, Link] = {}
         self._locks: dict[str, asyncio.Lock] = {}  # one connect/write at a time per peer
+        self._failures: dict[str, tuple[int, float]] = {}  # key -> (count, retry not before)
         self._inbox = Reassembler()
         self._adv_name: str | None = None
 
@@ -338,17 +352,25 @@ class BleTransport(Transport):
             await self.backend.advertise(self._adv_name)
         self._prune()
         self._inbox.expire()
+        now = time.monotonic()
         for key, (device, _) in list(self._peers.items()):
+            if self._failures.get(key, (0, 0.0))[1] > now:
+                continue  # backing off after repeated failures
             try:
                 await self._write(key, device, data)
             except Exception as exc:
-                log.info("ble: %s unreachable (%s)", key, _describe(exc))
+                self._note_failure(key, exc)
 
     async def send(self, to: Address, data: bytes) -> None:
         if to is None:
             await self.broadcast(data)
             return
-        await self._write(_key(to), to, data)
+        key = _key(to)
+        try:
+            await self._write(key, to, data)
+        except Exception as exc:
+            self._note_failure(key, exc)
+            raise
 
     async def _write(self, key: str, device: Any, data: bytes) -> None:
         async with self._locks.setdefault(key, asyncio.Lock()):
@@ -357,12 +379,21 @@ class BleTransport(Transport):
                 for piece in chunk(data, link.mtu):
                     await link.write(piece)
             except Exception:
+                # Forget the link, but only hang up if it is really gone: on
+                # BlueZ a disconnect would also drop the link the peer opened
+                # to us over the same physical connection.
                 self._links.pop(key, None)
-                await link.close()
+                if not link.alive:
+                    await link.close()
                 raise
+            self._failures.pop(key, None)
 
     async def _link(self, key: str, device: Any) -> Link:
         link = self._links.get(key)
+        if link is not None and not link.alive:
+            self._links.pop(key, None)
+            await link.close()
+            link = None
         if link is None:
             assert self.backend is not None, "transport not started"
             link = await asyncio.wait_for(self.backend.open(device), self.connect_timeout)
@@ -370,11 +401,18 @@ class BleTransport(Transport):
             log.info("ble: connected to %s (mtu %d)", key, link.mtu)
         return link
 
+    def _note_failure(self, key: str, exc: BaseException) -> None:
+        count = self._failures.get(key, (0, 0.0))[0] + 1
+        delay = min(BACKOFF_MAX, BACKOFF_BASE * 2 ** (count - 1))
+        self._failures[key] = (count, time.monotonic() + delay)
+        log.info("ble: %s unreachable (%s); next broadcast attempt in %.0f s", key, _describe(exc), delay)
+
     def _prune(self) -> None:
         cutoff = time.monotonic() - PEER_TTL
         for key, (_, seen) in list(self._peers.items()):
             if seen < cutoff:
                 del self._peers[key]
+                self._failures.pop(key, None)
                 link = self._links.pop(key, None)
                 if link is not None:
                     asyncio.get_running_loop().create_task(link.close())

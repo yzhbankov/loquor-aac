@@ -36,6 +36,11 @@ class FakeLink(Link):
     def __init__(self, air, src, dst, mtu):
         self.air, self.src, self.dst, self.mtu = air, src, dst, mtu
         self.open = True
+        self.closed = False
+
+    @property
+    def alive(self):
+        return self.open
 
     async def write(self, data):
         if not self.open or self.dst.address not in self.air.backends:
@@ -45,6 +50,7 @@ class FakeLink(Link):
 
     async def close(self):
         self.open = False
+        self.closed = True
 
 
 class FakeDevice:
@@ -173,13 +179,11 @@ async def test_lost_link_is_dropped_and_reopened():
         device = a._peers["BB"][0]
         await a.send(device, b"one")
         link = a._links["BB"]
-        link.open = False  # the radio dropped it
-        with pytest.raises(OSError):
-            await a.send(device, b"two")
-        assert "BB" not in a._links
-        await a.send(device, b"three")  # reconnects
+        link.open = False  # the radio dropped it: noticed before reuse, no failed write needed
+        await a.send(device, b"two")
+        assert a._links["BB"] is not link and link.closed
         await asyncio.sleep(0)
-        assert got == [b"one", b"three"]
+        assert got == [b"one", b"two"]
     finally:
         await a.stop()
         await b.stop()
@@ -324,3 +328,47 @@ async def test_bleak_backend_registers_the_service_once_and_only_swaps_the_name(
     backend._write_request(None, bytearray(b"hi"))
     await asyncio.sleep(0)
     assert received == [b"hi"]
+
+
+async def test_write_failure_on_a_live_link_does_not_hang_up(monkeypatch):
+    """On BlueZ, disconnecting would also drop the link the peer opened to us."""
+    air = Air()
+    a, b = BleTransport(FakeBackend(air, "AA")), BleTransport(FakeBackend(air, "BB"))
+    await a.start(lambda *_: None)
+    await b.start(lambda *_: None)
+    try:
+        await b.broadcast(b"AM" + bytes(14))
+        await asyncio.sleep(0)
+        device = a._peers["BB"][0]
+        await a.send(device, b"one")
+        link = a._links["BB"]
+
+        async def refuse(data):
+            raise OSError("characteristic not found")
+        monkeypatch.setattr(link, "write", refuse)
+        with pytest.raises(OSError):
+            await a.send(device, b"two")
+        assert "BB" not in a._links and link.open and not link.closed  # forgotten, not hung up
+    finally:
+        await a.stop()
+        await b.stop()
+
+
+async def test_broadcast_backs_off_from_a_peer_that_keeps_failing():
+    air = Air()
+    a = BleTransport(FakeBackend(air, "AA"))
+    await a.start(lambda *_: None)
+    try:
+        a._on_advertisement(FakeDevice("ZZ"), beacon_to_name(b"AM" + bytes(14)))  # heard, never reachable
+        await a.broadcast(b"hello")
+        assert a.backend.opened == 1 and a._failures["ZZ"][0] == 1
+        await a.broadcast(b"hello")  # within the 5 s backoff: not even tried
+        assert a.backend.opened == 1
+        a._failures["ZZ"] = (1, 0.0)  # backoff elapsed
+        await a.broadcast(b"hello")
+        assert a.backend.opened == 2 and a._failures["ZZ"][0] == 2
+        with pytest.raises(OSError):
+            await a.send(FakeDevice("ZZ"), b"direct")  # unicast still tries, and still counts
+        assert a._failures["ZZ"][0] == 3
+    finally:
+        await a.stop()
