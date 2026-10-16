@@ -177,10 +177,14 @@ Before the first run, on **both** devices:
   `KeyError: 'Device'` traceback from bleak at startup is harmless: it is
   bleak noticing our own GATT service in BlueZ.
 
-Verified so far between a Mac and an Ubuntu laptop: beacon seen, connection,
-HELLO delivered. The round trip after that is what the next run should
-show; if it does not, both logs with `-v` are the most useful thing to
-report.
+Verified between a Mac and an Ubuntu laptop: beacons both ways, handshake,
+the encrypted request and reply, `=== Goal complete ===` — about two
+minutes end to end, most of it the two LLMs. What is normal in the log:
+the first connection attempt may fail once (`stale GATT cache` on macOS,
+`Not connected` right after `connected (mtu 23)` on Linux) and succeed on
+the retry a few seconds later; `next broadcast attempt in N s` is the
+back-off doing its job. If it does not work, both logs are the most useful
+thing to report; add `-v` only if asked, it is very verbose.
 
 ### Fully offline test
 
@@ -215,6 +219,9 @@ report.
 | `Peer removed pairing information` (macOS) | forget the other laptop in Bluetooth settings on both sides; loquor does not pair |
 | `br-connection-canceled` / `br-connection-busy` (Linux) | set `ControllerMode = le` in `/etc/bluetooth/main.conf` and restart `bluetooth`; update loquor (connects are now serialised) |
 | `Characteristic … was not found` / `Multiple Characteristics` | the other side runs an older loquor that registered its service twice; update it and restart |
+| `connected (mtu 23)` then `Not connected` (Linux) | BlueZ reused the other side's inbound link, which cannot carry our writes; it retries with its own connection within ~20 s |
+| `peer exposes no loquor inbox` (macOS, first attempt) | stale GATT cache; the next attempt refreshes it |
+| `lost …` a while after the exchange | the link dropped and the peer stopped advertising; it is found again on its next beacon |
 | two devices silent, same Wi-Fi | guest/corporate Wi-Fi isolates clients and drops multicast — use a hotspot or home router |
 | `DROP … bad signature` | a peer's key changed (it deleted `~/.loquor/keys/`); it will re-handshake on its next beacon |
 | slow answers | on one computer both agents share one Ollama; a 3B model answers in 1–5 s per request on a laptop |

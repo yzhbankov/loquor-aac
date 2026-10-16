@@ -302,9 +302,9 @@ file next to the profile. Sensors and triggers may be plain functions. Only
 
 ## Roadmap
 
-1. **Bluetooth on real radios** — the transport exists and passes the
-   protocol tests over a fake radio; the first two-device run, and per-central
-   addressing on stacks that expose it, are next.
+1. **Bluetooth polish** — verified macOS ↔ Ubuntu end to end; next are
+   per-central addressing on stacks that expose it, and an L2CAP session
+   transport for bulk data.
 2. **Session transports** — TCP on the same Wi-Fi, then BLE L2CAP.
 3. **Gossip wire message** between relays (type ≥ 16), and UWB proximity.
 4. **Watch skill** — "every N seconds, put these readings in front of the
