@@ -136,6 +136,30 @@ its beacons, exchanges keys in the handshake and encrypts from there.
 
 If macOS asks "allow incoming network connections?", click Allow.
 
+### Over Bluetooth — no network at all
+
+Both devices need Bluetooth and the radio libraries, then the same
+commands with `--transport bluetooth`:
+
+```bash
+pip install -e ".[ble]"                      # bleak + bless, once per device
+
+# device A
+python run_agent.py demo/weather_and_clothes/weather_agent.json --transport bluetooth
+
+# device B
+python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport bluetooth
+```
+
+The startup line shows `transport bluetooth (ble)`. The beacon rides in the
+BLE advertisement as the device's local name; the messages go over a GATT
+connection, chunked to the link's MTU. Discovery takes one beacon interval
+plus a connection, so allow ~20 s before `met …` appears. macOS asks once
+to allow Bluetooth for your terminal; Linux needs BlueZ 5.50+ and
+`bluetoothd` running. The BLE transport passes the protocol tests over a
+simulated radio; a run on two real radios is the next thing to verify, so
+if it does not work for you, the log is the most useful thing to report.
+
 ### Fully offline test
 
 1. While online, do step 1 on both devices and run step 2 once on each.
@@ -148,7 +172,7 @@ If macOS asks "allow incoming network connections?", click Allow.
 
 | flag | effect |
 |---|---|
-| `--transport localhost\|wifi` | override the profile; both agents must match |
+| `--transport localhost\|wifi\|bluetooth` | override the profile; both agents must match |
 | `--interface <ip>` | `wifi`: choose the network interface |
 | `--model llama3.1:8b` | any model from `ollama list` |
 | `--visibility visible\|quiet\|silent` | `quiet`: never beacon but answer; `silent`: only initiate |
@@ -163,6 +187,9 @@ If macOS asks "allow incoming network connections?", click Allow.
 | `ModuleNotFoundError` | activate the venv, `pip install -r requirements.txt` |
 | agents never `met` each other | same `--transport` on both; neither `--visibility silent`; wait one beacon interval |
 | `no LAN interface found for wifi transport` | join a Wi-Fi network or hotspot, or pass `--interface` |
+| `bluetooth transport needs the radio libraries` | `pip install -e ".[ble]"` in the venv |
+| Bluetooth: never `met`, no errors | Bluetooth off or not allowed for the terminal (macOS: System Settings → Privacy & Security → Bluetooth); on Linux check `bluetoothctl show` says `Powered: yes` |
+| Bluetooth: `met` but requests time out | the GATT connection failed; move the devices closer, restart both agents (they reconnect lazily) |
 | two devices silent, same Wi-Fi | guest/corporate Wi-Fi isolates clients and drops multicast — use a hotspot or home router |
 | `DROP … bad signature` | a peer's key changed (it deleted `~/.loquor/keys/`); it will re-handshake on its next beacon |
 | slow answers | on one computer both agents share one Ollama; a 3B model answers in 1–5 s per request on a laptop |

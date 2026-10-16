@@ -127,11 +127,19 @@ step 1, `--transport wifi` on every command. A chair can be a Raspberry Pi
 with a cuff on its UART; the nurse's device anything with Python and a local
 model.
 
+**Over Bluetooth**, with no network at all: `pip install -e ".[ble]"` on
+every device, then `--transport bluetooth` on every command instead. The
+nurse's device connects to each chair over GATT as it hears its beacon;
+with three chairs allow ~30 s before the round starts, and raise
+`"settle"` in `nurse_agent.json` if a chair is slow to connect. See the
+weather demo's README for Bluetooth prerequisites and troubleshooting.
+
 ## 4. Troubleshooting
 
 | Problem | Fix |
 |---|---|
 | nurse concludes with fewer chairs than expected | they took longer than 15 s to answer — raise `"settle"`, or use a smaller model on the chairs (`--model qwen2.5:1.5b`) |
 | nurse never starts | it needs to hear at least one chair; same `--transport` on all |
+| Bluetooth: chairs never `met` | Bluetooth off or not allowed for the terminal; `pip install -e ".[ble]"` missing (the error says so) |
 | `no trigger fired: invalid input…` | the model's board did not match the schema; it is logged, nothing wrong is shown — rerun or use a larger model |
 | `model ... is not available in Ollama` | `ollama pull qwen2.5:3b` |
