@@ -222,3 +222,6 @@ __marimo__/
 # loquor agent task stores
 *.db
 .idea
+
+# local logs and scratch data
+data/
