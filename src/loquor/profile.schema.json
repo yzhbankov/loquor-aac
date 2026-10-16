@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
+  "title": "loquor agent profile",
+  "description": "One agent: who it is, what it measures (sensors), what it can do (triggers) and what it offers (skills). Device-level choices (transport, model) belong in ~/.loquor/config.json; the profile may still pin them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "skills"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": {
+      "type": "string", "minLength": 1,
+      "description": "Human-readable name. Also names the key file and the log label."
+    },
+    "description": {
+      "type": "string", "minLength": 1,
+      "description": "One sentence other agents' LLMs read to decide whether you can help them."
+    },
+    "system_prompt": {
+      "type": "string",
+      "description": "Default persona for every skill that takes a system_prompt."
+    },
+    "system_prompt_file": {
+      "type": "string",
+      "description": "Read the default system prompt from this text file (path relative to the profile). Easier to edit than a JSON string."
+    },
+    "visibility": {
+      "type": "string", "enum": ["visible", "quiet", "silent"], "default": "visible",
+      "description": "visible: beacon and answer. quiet: never beacon, but answer. silent: only initiate."
+    },
+    "beacon_interval": {
+      "type": "number", "exclusiveMinimum": 0,
+      "description": "Seconds between beacons. Lower = faster discovery, more radio traffic. Default: device config, else 10."
+    },
+    "key_file": {
+      "type": "string",
+      "description": "Ed25519 seed file. Default ~/.loquor/keys/<name>.key, created on first run."
+    },
+    "pinned_keys": {
+      "type": "string",
+      "description": "Level-1 trust store. Default ~/.loquor/pinned_keys.json."
+    },
+    "relay": {
+      "type": "boolean", "default": false,
+      "description": "Store and forward envelopes for peers out of each other's reach."
+    },
+    "transport": {
+      "$ref": "#/$defs/part",
+      "description": "Pin a transport: {\"type\": \"localhost\" | \"wifi\" | \"bluetooth\" | \"module:Class\"}. Usually left out so the device config decides."
+    },
+    "reasoner": {
+      "$ref": "#/$defs/part",
+      "description": "{\"type\": \"ollama\", \"model\": ..., \"temperature\": ...} or \"template\" or a custom class. Usually left out so the device config picks the model."
+    },
+    "sensors": {
+      "type": "array", "items": { "$ref": "#/$defs/part" },
+      "description": "Drivers that produce readings. Built-ins: simulated, command. Each needs a unique name."
+    },
+    "triggers": {
+      "type": "array", "items": { "$ref": "#/$defs/part" },
+      "description": "Drivers that perform actions. Built-ins: console, command. Each needs a unique name."
+    },
+    "skills": {
+      "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/part" },
+      "description": "What the agent offers and pursues. Built-ins: llm_answer, goal, sensor_report."
+    }
+  },
+  "$defs": {
+    "part": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string", "minLength": 1,
+          "description": "A built-in name, \"module:Class\" for an installed module, or \"file.py:Class\" for a file next to the profile. Every other key is passed to the constructor."
+        },
+        "system_prompt_file": {
+          "type": "string",
+          "description": "For skills: read system_prompt from this text file (path relative to the profile)."
+        }
+      }
+    }
+  }
+}

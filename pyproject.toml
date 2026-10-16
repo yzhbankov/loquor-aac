@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loquor-aac"
-version = "0.3.0"
-description = "loquor — offline agent-to-agent communication over local transports (Wi-Fi/IP today; BLE, UWB and mesh planned)"
+version = "0.5.0"
+description = "loquor — AI agents on separate devices that discover each other and work together offline, over Wi-Fi or Bluetooth"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-keywords = ["agents", "a2a", "offline", "mdns", "edge", "local-first"]
+keywords = ["agents", "a2a", "offline", "edge", "local-first", "bluetooth", "ollama"]
 dependencies = [
     "aiohttp>=3.9",
     "cbor2>=5.6",
@@ -32,6 +32,9 @@ ble = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+loquor = ["profile.schema.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
