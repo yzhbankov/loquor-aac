@@ -259,7 +259,7 @@ a peer was last heard from and hands it back; it never interprets it.
 | `localhost` | implemented | UDP multicast `239.255.76.76:47600` on loopback |
 | `wifi` | implemented | same group on the LAN interface, TTL 1 |
 | `memory` | implemented | in-process hub for tests |
-| `bluetooth` | implemented, not yet run on two radios | beacon = advertisement local name (base64url of the 16 bytes); envelopes written to a GATT inbox characteristic, chunked to the MTU with a 6-byte `stream, index, total` header |
+| `bluetooth` | implemented, verified macOS ↔ Ubuntu | beacon = advertisement local name (base64url of the 16 bytes); envelopes written to a GATT inbox characteristic, chunked to the MTU with a 6-byte `stream, index, total` header; a peer with a live link counts as heard even when it stops advertising |
 
 On multicast, `send` is a broadcast (processes on one host share the port);
 the envelope's `to` field does the addressing.

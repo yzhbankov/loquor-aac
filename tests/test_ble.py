@@ -372,3 +372,50 @@ async def test_broadcast_backs_off_from_a_peer_that_keeps_failing():
         assert a._failures["ZZ"][0] == 3
     finally:
         await a.stop()
+
+
+async def test_connected_peers_stay_alive_without_advertisements():
+    """BlueZ stops advertising while connected; a live link must keep the peer alive."""
+    air = Air()
+    a, b = BleTransport(FakeBackend(air, "AA")), BleTransport(FakeBackend(air, "BB"))
+    heard = []
+    await a.start(lambda data, dev: heard.append((data, dev)))
+    await b.start(lambda *_: None)
+    try:
+        beacon_b = b"AM\x01" + b"\xbb" * 13
+        await b.broadcast(beacon_b)  # advertised once
+        await asyncio.sleep(0)
+        assert [d for d, _ in heard] == [beacon_b]
+        device = a._peers["BB"][0]
+        await a.send(device, b"open a link")  # now A holds a live link to B
+
+        await a.broadcast(b"AM\x01" + b"\xaa" * 13)  # B never advertises again...
+        await asyncio.sleep(0)
+        assert [d for d, _ in heard].count(beacon_b) == 2  # ...yet A hears B's beacon replayed
+        assert heard[-1][1].address == "BB"
+
+        a._links["BB"].open = False  # link gone: no more replays
+        await a.broadcast(b"AM\x01" + b"\xaa" * 13)
+        await asyncio.sleep(0)
+        assert [d for d, _ in heard].count(beacon_b) == 2
+    finally:
+        await a.stop()
+        await b.stop()
+
+
+def test_bleak_local_service_noise_is_filtered(caplog):
+    import logging
+    from loquor.transports.ble import _quiet_bleak_local_service_noise
+
+    _quiet_bleak_local_service_noise()
+    logger = logging.getLogger("dbus_fast.message_bus")
+    with caplog.at_level(logging.ERROR, logger="dbus_fast.message_bus"):
+        try:
+            {}["Device"]
+        except KeyError:
+            logger.exception("A message handler raised an exception: 'Device'")
+        try:
+            {}["Other"]
+        except KeyError:
+            logger.exception("some other failure")
+    assert [r.getMessage() for r in caplog.records] == ["some other failure"]

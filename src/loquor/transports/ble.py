@@ -21,10 +21,11 @@ The radio is behind a small :class:`BleBackend` seam: :class:`BleakBackend`
 uses ``bleak`` (central) and ``bless`` (peripheral); tests use an in-memory
 backend. Install the radio libraries with ``pip install -e ".[ble]"``.
 
-Verified so far: a macOS ↔ Ubuntu beacon, connection and 660-byte HELLO.
-Known limits: no per-central addressing on the server side; the GATT
-service is registered once per process, so the advertised name is changed
-without re-registering it; stale classic-Bluetooth bonds between two
+Verified: a full AMP exchange (beacon, HELLO/HELLO_ACK, encrypted MSG and
+ACK both ways) between a macOS and an Ubuntu laptop. Known rough edges: no
+per-central addressing on the server side; the first connection may fail
+once on a stale GATT cache or on a BlueZ "already connected" pseudo-link
+(both self-heal on retry); stale classic-Bluetooth bonds between two
 laptops must be removed on both sides (see docs).
 """
 
@@ -53,8 +54,9 @@ DEFAULT_MTU = 185
 MIN_CHUNK = 20
 PEER_TTL = 60.0  # forget a peer not advertised for this long
 STREAM_TTL = 15.0  # drop a half-received envelope after this long
-BACKOFF_BASE = 5.0  # after a failed connect/write, skip broadcasts to that peer for 5, 10, 20 … s
-BACKOFF_MAX = 60.0
+BACKOFF_BASE = 2.0  # after a failed connect/write, skip broadcasts to that peer for 2, 4, 8 … s
+BACKOFF_MAX = 30.0
+CONNECT_TIMEOUT = 8.0  # a BLE connection that takes longer than this is not going to happen
 DEFAULT_NAME = "loquor"  # advertised until the first beacon (nodes that never beacon keep it)
 
 
@@ -223,6 +225,7 @@ class BleakBackend(BleBackend):
     async def start_scan(self, on_advertisement: Callable[[Any, str | None], None]) -> None:
         from bleak import BleakScanner
 
+        _quiet_bleak_local_service_noise()
         self._scanner = BleakScanner(detection_callback=lambda device, adv: on_advertisement(device, adv.local_name))
         await self._scanner.start()
 
@@ -297,11 +300,12 @@ class _BleakLink(Link):
 class BleTransport(Transport):
     max_payload = 65536
 
-    def __init__(self, backend: BleBackend | None = None, *, connect_timeout: float = 15.0):
+    def __init__(self, backend: BleBackend | None = None, *, connect_timeout: float = CONNECT_TIMEOUT):
         self.backend = backend
         self.connect_timeout = connect_timeout
         self._on_receive: OnReceive | None = None
         self._peers: dict[str, tuple[Any, float]] = {}  # key -> (device, last advertised)
+        self._beacons: dict[str, bytes] = {}  # key -> last beacon heard from it
         self._links: dict[str, Link] = {}
         self._locks: dict[str, asyncio.Lock] = {}  # one connect/write at a time per peer
         self._failures: dict[str, tuple[int, float]] = {}  # key -> (count, retry not before)
@@ -339,7 +343,9 @@ class BleTransport(Transport):
         beacon = name_to_beacon(local_name)
         if beacon is None:
             return
-        self._peers[_key(device)] = (device, time.monotonic())
+        key = _key(device)
+        self._peers[key] = (device, time.monotonic())
+        self._beacons[key] = beacon
         if self._on_receive is not None:
             self._on_receive(beacon, device)
 
@@ -352,6 +358,7 @@ class BleTransport(Transport):
             await self.backend.advertise(self._adv_name)
         self._prune()
         self._inbox.expire()
+        self._refresh_connected()
         now = time.monotonic()
         for key, (device, _) in list(self._peers.items()):
             if self._failures.get(key, (0, 0.0))[1] > now:
@@ -407,15 +414,59 @@ class BleTransport(Transport):
         self._failures[key] = (count, time.monotonic() + delay)
         log.info("ble: %s unreachable (%s); next broadcast attempt in %.0f s", key, _describe(exc), delay)
 
+    def _refresh_connected(self) -> None:
+        """A peer we hold a live link to is in range, even if it stopped advertising.
+
+        BlueZ, for one, stops advertising while a central is connected; without
+        this the protocol would forget a connected peer after three beacon
+        intervals. Its last beacon is replayed as if just heard.
+        """
+        for key, link in list(self._links.items()):
+            beacon = self._beacons.get(key)
+            if beacon is None or not link.alive or key not in self._peers:
+                continue
+            device, _ = self._peers[key]
+            self._peers[key] = (device, time.monotonic())
+            if self._on_receive is not None:
+                self._on_receive(beacon, device)
+
     def _prune(self) -> None:
         cutoff = time.monotonic() - PEER_TTL
         for key, (_, seen) in list(self._peers.items()):
             if seen < cutoff:
                 del self._peers[key]
+                self._beacons.pop(key, None)
                 self._failures.pop(key, None)
                 link = self._links.pop(key, None)
                 if link is not None:
                     asyncio.get_running_loop().create_task(link.close())
+
+
+class _DropLocalServiceKeyError(logging.Filter):
+    """bleak (BlueZ) logs a KeyError: 'Device' once for our own local GATT service.
+
+    Its D-Bus watcher assumes every GattService1 object belongs to a remote
+    device; the one bless registers for our inbox has no Device property. The
+    exception is caught upstream and nothing is lost, so hide the traceback.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            if isinstance(exc, KeyError) and exc.args == ("Device",):
+                return False
+        return True
+
+
+_noise_filtered = False
+
+
+def _quiet_bleak_local_service_noise() -> None:
+    global _noise_filtered
+    if not _noise_filtered:
+        for name in ("dbus_fast.message_bus", "dbus_fast", "bleak.backends.bluezdbus.manager"):
+            logging.getLogger(name).addFilter(_DropLocalServiceKeyError())
+        _noise_filtered = True
 
 
 def _corebluetooth_advertisement(name: str) -> dict:
