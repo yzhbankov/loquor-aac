@@ -206,7 +206,7 @@ class BleakBackend(BleBackend):
         delegate = getattr(self._server, "peripheral_manager_delegate", None)
         if delegate is not None:  # CoreBluetooth: swap the advertisement, keep the service
             await delegate.stop_advertising()
-            await delegate.startAdvertising_({"kCBAdvDataLocalName": name, "kCBAdvDataServiceUUIDs": []})
+            await delegate.start_advertising(_corebluetooth_advertisement(name))
         else:  # BlueZ: stop() unregisters cleanly, so a fresh server is safe
             await self._server.stop()
             self._server = None
@@ -378,6 +378,14 @@ class BleTransport(Transport):
                 link = self._links.pop(key, None)
                 if link is not None:
                     asyncio.get_running_loop().create_task(link.close())
+
+
+def _corebluetooth_advertisement(name: str) -> dict:
+    try:
+        from CoreBluetooth import CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey
+    except ImportError:  # not macOS (tests): the constants' plain values
+        CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey = "kCBAdvDataLocalName", "kCBAdvDataServiceUUIDs"
+    return {CBAdvertisementDataLocalNameKey: name, CBAdvertisementDataServiceUUIDsKey: []}
 
 
 def _key(device: Any) -> str:

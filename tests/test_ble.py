@@ -271,8 +271,9 @@ class StubDelegate:
     async def stop_advertising(self):
         self.calls.append("stop")
 
-    async def startAdvertising_(self, data):
-        self.calls.append(("start", data["kCBAdvDataLocalName"]))
+    async def start_advertising(self, data, timeout=2.0):
+        name = next(v for k, v in data.items() if str(k) == "kCBAdvDataLocalName")
+        self.calls.append(("start", name))
 
 
 class StubBlessServer:
