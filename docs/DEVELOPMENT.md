@@ -54,6 +54,7 @@ One file per protocol section plus the agent and config:
 | `test_agent.py` | dispatch, errors, trust at dispatch, retries, idempotent answers, sensors in prompts, goal firing a trigger, multicast end to end |
 | `test_config.py` | profiles, overrides, `module:Class`, key files |
 | `test_transports.py` | memory hub, multicast round-trip, transport selection |
+| `test_ble.py` | beacon-in-name codec, chunking/reassembly, the BLE transport and a full handshake + exchange over a fake radio |
 | `test_architecture.py` | the dependency rule |
 
 Patterns worth copying:
@@ -291,9 +292,16 @@ class MyLink(Transport):
 - Register it in `transports/__init__.py` (`make_transport`) for a short
   name, or use `"transport": {"type": "my_pkg.link:MyLink"}` in a profile.
 
-BLE sketch: `broadcast` = write to every connected central/peripheral;
-`send` = write to one; beacon = advertisement payload; chunk envelopes to
-the MTU with a 1-byte sequence prefix and reassemble before `on_receive`.
+The BLE transport (`transports/ble.py`) is the worked example of a
+non-broadcast medium: beacon in the advertisement's local name, envelopes
+chunked (`stream, index, total`) into a GATT inbox characteristic, one lazily
+opened link per peer, `broadcast` = write to everyone heard recently. Its
+radio stack is behind `BleBackend` (`start_server`, `advertise`,
+`start_scan`, `open`, `stop`); `tests/test_ble.py` runs the whole protocol
+over an in-memory backend, which is how to test a transport without
+hardware. Run it for real with `pip install -e ".[ble]"` and
+`--transport bluetooth` (macOS: allow Bluetooth for your terminal when
+asked; Linux: BlueZ ≥ 5.50 and `bluetoothd` running).
 
 ## Add an extension
 

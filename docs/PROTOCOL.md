@@ -259,10 +259,18 @@ a peer was last heard from and hands it back; it never interprets it.
 | `localhost` | implemented | UDP multicast `239.255.76.76:47600` on loopback |
 | `wifi` | implemented | same group on the LAN interface, TTL 1 |
 | `memory` | implemented | in-process hub for tests |
-| `bluetooth` | planned | BLE connections, chunked to the MTU; beacons as advertisements |
+| `bluetooth` | implemented, not yet run on two radios | beacon = advertisement local name (base64url of the 16 bytes); envelopes written to a GATT inbox characteristic, chunked to the MTU with a 6-byte `stream, index, total` header |
 
 On multicast, `send` is a broadcast (processes on one host share the port);
 the envelope's `to` field does the addressing.
+
+On BLE every node is both peripheral (advertises its beacon, hosts the inbox)
+and central (scans, connects to the peers it hears, writes). A write carries
+no sender identity on most stacks, so an envelope that arrives by write has
+no address: the node answers at the address it learned from that peer's
+beacon (`_heard_at` by id prefix). `broadcast` writes to every peer heard
+in the last 60 s and re-advertises a beacon; `send` writes to one link,
+opened lazily and reopened after a failure.
 
 ## 11. Application bodies (agent layer, not protocol)
 

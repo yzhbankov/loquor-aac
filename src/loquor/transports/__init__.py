@@ -2,8 +2,9 @@
 
 - :class:`MulticastTransport` — UDP multicast: ``localhost`` (loopback) and
   ``wifi`` (the LAN interface)
+- :class:`BleTransport` — Bluetooth Low Energy: beacons as advertisements,
+  envelopes over a GATT inbox (needs ``pip install -e ".[ble]"``)
 - :class:`MemoryTransport` — in-process, for tests
-- ``bluetooth`` — planned
 
 ``make_transport(name)`` builds the one named in a profile or on the
 command line.
@@ -12,6 +13,7 @@ command line.
 from __future__ import annotations
 
 from loquor.transports.base import Address, OnReceive, Transport
+from loquor.transports.ble import BleTransport
 from loquor.transports.memory import MemoryHub, MemoryTransport
 from loquor.transports.multicast import MULTICAST_PORT, MulticastTransport, primary_ip
 
@@ -28,7 +30,7 @@ def make_transport(
     - ``wifi``: multicast on the LAN interface (Wi-Fi, hotspot or Ethernet) —
       agents on different machines. ``interface`` picks the local IP of the
       interface; by default the one with the default route.
-    - ``bluetooth``: planned (see docs/ARCHITECTURE.md).
+    - ``bluetooth``: BLE — agents on devices within radio range, no network.
 
     Agents only hear each other on the same transport.
     """
@@ -43,13 +45,22 @@ def make_transport(
             )
         return MulticastTransport(interface=ip, port=port)
     if name == "bluetooth":
-        raise NotImplementedError("bluetooth transport is planned; see docs/ARCHITECTURE.md")
+        try:
+            import bleak  # noqa: F401
+            import bless  # noqa: F401
+        except ImportError as exc:
+            raise OSError(
+                f"bluetooth transport needs the radio libraries ({exc.name}); "
+                'install them with: pip install -e ".[ble]"'
+            ) from exc
+        return BleTransport()
     raise ValueError(f"unknown transport {name!r}; choose from {', '.join(TRANSPORTS)}")
 
 
 __all__ = [
     "TRANSPORTS",
     "Address",
+    "BleTransport",
     "MemoryHub",
     "MemoryTransport",
     "MulticastTransport",

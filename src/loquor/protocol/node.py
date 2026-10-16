@@ -92,6 +92,7 @@ class Node:
         self._overheard_handlers: list[OverheardHandler] = []
         self._acks: dict[bytes, asyncio.Future[None]] = {}
         self._hello_at: dict[bytes, float] = {}  # prefix -> when we last HELLO'd it
+        self._heard_at: dict[bytes, Address] = {}  # prefix -> where its beacon came from
         self._initiated: set[bytes] = set()  # agent ids we HELLO'd first (for silent nodes)
         self._tasks: set[asyncio.Task] = set()
 
@@ -257,6 +258,8 @@ class Node:
     def _on_beacon(self, beacon: Beacon, address: Address) -> None:
         if beacon.prefix == prefix_of(self.agent_id):
             return
+        if address is not None:
+            self._heard_at[beacon.prefix] = address
         peer, changed = self.peers.heard_beacon(beacon, address)
         self.peer_heard.set()
         now = time.monotonic()
@@ -285,6 +288,8 @@ class Node:
         if not ack and not self.visibility.answers_hello and env.from_id not in self._initiated:
             wire.debug("IGNORE HELLO from %s: silent", env.from_id[:4].hex())
             return
+        if address is None:  # arrived by a link with no sender identity (BLE write): use the beacon's
+            address = self._heard_at.get(prefix_of(env.from_id))
         peer, new = self.peers.heard_hello(env.from_id, public_key, card.to_dict(), address)
         peer.extensions = [int(e) for e in body.get("ext", [])]  # what it supports; chosen = intersection
         peer.seq = int(body.get("seq", 0)) & 0xFF  # the card version its beacons will carry
@@ -305,8 +310,11 @@ class Node:
             wire.info("DROP  MSG from %s: %s", peer.label, exc)
             return
         if not env.is_broadcast:
+            # Some links (BLE writes) deliver without a sender address: answer
+            # where the peer was last heard instead.
             await self._send(Envelope(type=Type.ACK, from_id=self.agent_id, to=peer.agent_id,
-                                      body=env.msg_id, ttl=self.ttl), address)
+                                      body=env.msg_id, ttl=self.ttl),
+                             address if address is not None else peer.address)
         for handler in self._message_handlers:
             await handler(peer, body)
 

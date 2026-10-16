@@ -108,9 +108,12 @@ class Transport:
 
 The port belongs to the protocol; `transports/` implements it. Multicast
 implements `send` as `broadcast` (processes on one host share a port; the
-envelope's `to` does the addressing). BLE will implement `broadcast` as a
-write to each connection and `send` as a write to one, with chunking inside
-the adapter and beacons as advertisements.
+envelope's `to` does the addressing). BLE (`transports/ble.py`) implements
+`broadcast` as a write to every peer heard recently plus re-advertising,
+`send` as a write to one peer's GATT inbox, chunking to the MTU inside the
+adapter, and the beacon as the advertisement's local name. The radio stack
+sits behind a `BleBackend` seam (`bleak` + `bless`, or an in-memory fake
+for tests).
 
 ### Protocol node — `protocol/node.py`
 
@@ -299,8 +302,9 @@ file next to the profile. Sensors and triggers may be plain functions. Only
 
 ## Roadmap
 
-1. **Bluetooth** — `transports/ble.py`: beacons as BLE advertisements,
-   envelopes over GATT/L2CAP with chunking. Nothing above the transport changes.
+1. **Bluetooth on real radios** — the transport exists and passes the
+   protocol tests over a fake radio; the first two-device run, and per-central
+   addressing on stacks that expose it, are next.
 2. **Session transports** — TCP on the same Wi-Fi, then BLE L2CAP.
 3. **Gossip wire message** between relays (type ≥ 16), and UWB proximity.
 4. **Watch skill** — "every N seconds, put these readings in front of the

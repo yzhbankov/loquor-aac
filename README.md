@@ -105,6 +105,18 @@ Nothing to pair: the agents find each other by beacons and exchange keys
 in the handshake. Each demo's README explains the log lines and what to
 try next.
 
+### Run a demo — option 3: Bluetooth, no network at all
+
+```bash
+pip install -e ".[ble]"                                   # bleak + bless
+python run_agent.py demo/weather_and_clothes/weather_agent.json --transport bluetooth    # device A
+python run_agent.py demo/weather_and_clothes/clothing_agent.json --transport bluetooth   # device B
+```
+
+The beacon rides in the BLE advertisement and messages go over a GATT
+connection. The transport passes the protocol tests over a simulated
+radio; a run on two real radios is the next thing to verify.
+
 ## Architecture
 
 Five layers, one small interface each. Lower layers never import upper ones.
@@ -116,7 +128,7 @@ Five layers, one small interface each. Lower layers never import upper ones.
                    ├─ triggers   drivers that perform actions             (yours: one class)
                    ├─ reasoning  the LLM behind one method                (Ollama · template)
                    └─ protocol   identity · beacons · handshake · encrypted envelopes (AMP v1)
-                        └─ transports   bytes over a link: localhost · wifi · (BLE next)
+                        └─ transports   bytes over a link: localhost · wifi · bluetooth
 ```
 
 An agent is a **JSON profile** that names its parts; each part is a
@@ -127,7 +139,7 @@ reasons behind them: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest            # 68 tests, no model or network needed, ~3 s
+python -m pytest            # 74 tests, no model, network or radio needed, ~3 s
 ```
 
 A sensor, a trigger or a skill is one class next to your profile:
@@ -174,7 +186,7 @@ extension: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 | done | next |
 |---|---|
-| AMP v1: persisted identity, signed CBOR envelopes, beacons, handshake, encryption, acknowledgements, visibility policies | Bluetooth transport |
+| AMP v1: persisted identity, signed CBOR envelopes, beacons, handshake, encryption, acknowledgements, visibility policies | Bluetooth on two real radios (transport done, fake-radio tested) |
 | Extensions: capability queries, session negotiation, relay store-and-forward, trust levels with pinned keys | Pairing ceremony (QR / fingerprint) from the CLI |
 | Sensors and triggers with schema-validated LLM proposals; `goal` skill that gathers from many peers | A watch skill: readings → LLM → trigger on a timer |
 | Two demos verified on one computer | Two-device run; UWB proximity |
