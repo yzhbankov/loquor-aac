@@ -9,6 +9,9 @@ from loquor.protocol import AgentCard, Identity, Node, skill_entry
 from loquor.transports.ble import (
     DEFAULT_MTU,
     HEADER,
+    INBOX_UUID,
+    SERVICE_UUID,
+    BleakBackend,
     BleBackend,
     BleTransport,
     Link,
@@ -50,12 +53,13 @@ class FakeDevice:
 
 
 class FakeBackend(BleBackend):
-    def __init__(self, air, address, mtu=DEFAULT_MTU):
-        self.air, self.address, self.mtu = air, address, mtu
+    def __init__(self, air, address, mtu=DEFAULT_MTU, connect_delay=0.0):
+        self.air, self.address, self.mtu, self.connect_delay = air, address, mtu, connect_delay
         self.on_write = None
         self.on_adv = None
         self.name = None
         self.advertised = []
+        self.opened = 0
 
     async def start_server(self, on_write):
         self.on_write = on_write
@@ -73,6 +77,8 @@ class FakeBackend(BleBackend):
         self.on_adv = on_advertisement
 
     async def open(self, device):
+        self.opened += 1
+        await asyncio.sleep(self.connect_delay)
         target = self.air.backends.get(device.address)
         if target is None:
             raise OSError("no such device")
@@ -234,3 +240,87 @@ def test_make_transport_explains_missing_radio_libraries(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_bless)
     with pytest.raises(OSError, match=r'pip install -e "\.\[ble\]"'):
         make_transport("bluetooth")
+
+
+async def test_concurrent_sends_to_one_peer_open_a_single_link():
+    """BLE stacks refuse a second connect while one is in progress (br-connection-busy)."""
+    air = Air()
+    a, b = BleTransport(FakeBackend(air, "AA", connect_delay=0.02)), BleTransport(FakeBackend(air, "BB"))
+    got = []
+    await a.start(lambda *_: None)
+    await b.start(lambda data, dev: got.append(data))
+    try:
+        await b.broadcast(b"AM" + bytes(14))
+        await asyncio.sleep(0)
+        device = a._peers["BB"][0]
+        await asyncio.gather(a.send(device, b"one"), a.send(device, b"two"), a.send(device, b"three"))
+        await asyncio.sleep(0)
+        assert a.backend.opened == 1 and sorted(got) == [b"one", b"three", b"two"]
+    finally:
+        await a.stop()
+        await b.stop()
+
+
+# ------------------------------------------------- the real backend, stubbed
+
+
+class StubDelegate:
+    def __init__(self):
+        self.calls = []
+
+    async def stop_advertising(self):
+        self.calls.append("stop")
+
+    async def start_advertising(self, data, timeout=2.0):
+        name = next(v for k, v in data.items() if str(k) == "kCBAdvDataLocalName")
+        self.calls.append(("start", name))
+
+
+class StubBlessServer:
+    instances = []
+
+    def __init__(self, name):
+        self.name, self.services, self.chars, self.started = name, [], [], 0
+        self.peripheral_manager_delegate = StubDelegate()
+        StubBlessServer.instances.append(self)
+
+    async def add_new_service(self, uuid):
+        self.services.append(uuid)
+
+    async def add_new_characteristic(self, service, char, props, value, perms):
+        self.chars.append(char)
+
+    async def start(self):
+        self.started += 1
+
+    async def stop(self):
+        pass
+
+
+async def test_bleak_backend_registers_the_service_once_and_only_swaps_the_name(monkeypatch):
+    import types, sys
+    stub = types.ModuleType("bless")
+    stub.BlessServer = StubBlessServer
+    stub.GATTCharacteristicProperties = types.SimpleNamespace(write=1, write_without_response=2)
+    stub.GATTAttributePermissions = types.SimpleNamespace(writeable=1)
+    monkeypatch.setitem(sys.modules, "bless", stub)
+    StubBlessServer.instances.clear()
+
+    backend = BleakBackend()
+    received = []
+    await backend.start_server(received.append)
+    assert backend._server is None  # lazy: nothing hosted until there is a name to advertise
+
+    await backend.advertise("first-beacon-name")
+    await backend.advertise("first-beacon-name")  # unchanged: no-op
+    await backend.advertise("second-beacon-name")  # changed: swap the advertisement only
+    server = backend._server
+    assert len(StubBlessServer.instances) == 1 and server.started == 1
+    assert server.services == [SERVICE_UUID] and server.chars == [INBOX_UUID]
+    assert server.peripheral_manager_delegate.calls == ["stop", ("start", "second-beacon-name")]
+    assert backend._name == "second-beacon-name"
+
+    # Writes arrive from the radio thread and are handed to the loop as bytes.
+    backend._write_request(None, bytearray(b"hi"))
+    await asyncio.sleep(0)
+    assert received == [b"hi"]

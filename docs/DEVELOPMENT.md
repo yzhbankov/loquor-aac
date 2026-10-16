@@ -301,7 +301,12 @@ radio stack is behind `BleBackend` (`start_server`, `advertise`,
 over an in-memory backend, which is how to test a transport without
 hardware. Run it for real with `pip install -e ".[ble]"` and
 `--transport bluetooth` (macOS: allow Bluetooth for your terminal when
-asked; Linux: BlueZ ≥ 5.50 and `bluetoothd` running).
+asked; Linux: BlueZ ≥ 5.50, `bluetoothd` running, `ControllerMode = le` in
+`/etc/bluetooth/main.conf`; both: forget any old pairing between the two
+machines). Two things the first real run taught: the GATT service must be
+registered once per process (CoreBluetooth adds a second copy on a server
+restart, and peers then find two characteristics), and connects to one
+peer must be serialised (BlueZ answers `br-connection-busy` otherwise).
 
 ## Add an extension
 

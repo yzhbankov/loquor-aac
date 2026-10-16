@@ -14,16 +14,18 @@ scans and connects to the peers it hears):
   protocol then answers at the address it learned from the peer's beacon.
 - **broadcast()** writes to every peer heard recently (opening links as
   needed) and, for a beacon, also (re)advertises it. **send(to, …)**
-  writes to one peer's link.
+  writes to one peer's link. Opening and writing a link is serialised per
+  peer: BLE stacks refuse concurrent connection attempts.
 
 The radio is behind a small :class:`BleBackend` seam: :class:`BleakBackend`
 uses ``bleak`` (central) and ``bless`` (peripheral); tests use an in-memory
 backend. Install the radio libraries with ``pip install -e ".[ble]"``.
 
-Known limits of this first version: no per-central addressing on the
-server side, one GATT connection per peer kept open lazily, macOS
-advertising only carries the local name (no manufacturer data), and the
-real-radio path has not yet been exercised on two devices.
+Verified so far: a macOS ↔ Ubuntu beacon, connection and 660-byte HELLO.
+Known limits: no per-central addressing on the server side; the GATT
+service is registered once per process, so the advertised name is changed
+without re-registering it; stale classic-Bluetooth bonds between two
+laptops must be removed on both sides (see docs).
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ DEFAULT_MTU = 185
 MIN_CHUNK = 20
 PEER_TTL = 60.0  # forget a peer not advertised for this long
 STREAM_TTL = 15.0  # drop a half-received envelope after this long
+DEFAULT_NAME = "loquor"  # advertised until the first beacon (nodes that never beacon keep it)
 
 
 # ---------------------------------------------------------------- codecs
@@ -136,7 +139,7 @@ class BleBackend:
         raise NotImplementedError
 
     async def advertise(self, name: str) -> None:
-        """Advertise with this local name (restart only if it changed)."""
+        """Advertise with this local name (a no-op if unchanged)."""
         raise NotImplementedError
 
     async def start_scan(self, on_advertisement: Callable[[Any, str | None], None]) -> None:
@@ -151,7 +154,13 @@ class BleBackend:
 
 
 class BleakBackend(BleBackend):
-    """bleak for scanning/connecting, bless for advertising/hosting."""
+    """bleak for scanning/connecting, bless for advertising/hosting.
+
+    The GATT server is created once, lazily, with the first name to
+    advertise (the first beacon, or ``loquor`` if a write is needed before
+    any beacon). A later name change only swaps the advertisement: on
+    CoreBluetooth re-registering the service would add it a second time.
+    """
 
     def __init__(self) -> None:
         self._server = None
@@ -159,27 +168,29 @@ class BleakBackend(BleBackend):
         self._name: str | None = None
         self._on_write: Callable[[bytes], None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._server_lock = asyncio.Lock()
 
     async def start_server(self, on_write: Callable[[bytes], None]) -> None:
         self._on_write = on_write
         self._loop = asyncio.get_running_loop()
-        await self._restart_server("loquor")
 
-    async def _restart_server(self, name: str) -> None:
-        from bless import BlessServer, GATTAttributePermissions, GATTCharacteristicProperties
+    async def ensure_server(self, name: str = DEFAULT_NAME) -> None:
+        async with self._server_lock:
+            if self._server is not None:
+                return
+            from bless import BlessServer, GATTAttributePermissions, GATTCharacteristicProperties
 
-        if self._server is not None:
-            await self._server.stop()
-        server = BlessServer(name=name)
-        await server.add_new_service(SERVICE_UUID)
-        await server.add_new_characteristic(
-            SERVICE_UUID, INBOX_UUID,
-            GATTCharacteristicProperties.write | GATTCharacteristicProperties.write_without_response,
-            None, GATTAttributePermissions.writeable,
-        )
-        server.write_request_func = self._write_request
-        await server.start()
-        self._server, self._name = server, name
+            server = BlessServer(name=name)
+            await server.add_new_service(SERVICE_UUID)
+            await server.add_new_characteristic(
+                SERVICE_UUID, INBOX_UUID,
+                GATTCharacteristicProperties.write | GATTCharacteristicProperties.write_without_response,
+                None, GATTAttributePermissions.writeable,
+            )
+            server.write_request_func = self._write_request
+            await server.start()
+            self._server, self._name = server, name
+            log.info("ble: hosting inbox, advertising as %s", name)
 
     def _write_request(self, characteristic, value, **kwargs) -> None:
         # Called from the radio stack's thread; hand the bytes to the loop.
@@ -187,8 +198,21 @@ class BleakBackend(BleBackend):
             self._loop.call_soon_threadsafe(self._on_write, bytes(value))
 
     async def advertise(self, name: str) -> None:
-        if name != self._name:
-            await self._restart_server(name)
+        if self._server is None:
+            await self.ensure_server(name)
+            return
+        if name == self._name:
+            return
+        delegate = getattr(self._server, "peripheral_manager_delegate", None)
+        if delegate is not None:  # CoreBluetooth: swap the advertisement, keep the service
+            await delegate.stop_advertising()
+            await delegate.start_advertising(_corebluetooth_advertisement(name))
+        else:  # BlueZ: stop() unregisters cleanly, so a fresh server is safe
+            await self._server.stop()
+            self._server = None
+            await self.ensure_server(name)
+        self._name = name
+        log.info("ble: now advertising as %s", name)
 
     async def start_scan(self, on_advertisement: Callable[[Any, str | None], None]) -> None:
         from bleak import BleakScanner
@@ -199,9 +223,10 @@ class BleakBackend(BleBackend):
     async def open(self, device: Any) -> Link:
         from bleak import BleakClient
 
+        await self.ensure_server()  # a peer we talk to will want to answer
         client = BleakClient(device)
         await client.connect()
-        return _BleakLink(client)
+        return await _BleakLink.create(client)
 
     async def stop(self) -> None:
         if self._scanner is not None:
@@ -211,12 +236,40 @@ class BleakBackend(BleBackend):
 
 
 class _BleakLink(Link):
-    def __init__(self, client):
+    def __init__(self, client, characteristic, mtu: int):
         self.client = client
-        self.mtu = getattr(client, "mtu_size", None) or DEFAULT_MTU
+        self.characteristic = characteristic
+        self.mtu = mtu
+
+    @classmethod
+    async def create(cls, client) -> _BleakLink:
+        characteristic = None
+        for service in client.services:
+            if str(service.uuid).lower() == SERVICE_UUID:
+                for c in service.characteristics:
+                    if str(c.uuid).lower() == INBOX_UUID:
+                        characteristic = c
+                        break
+            if characteristic is not None:
+                break
+        if characteristic is None:
+            await client.disconnect()
+            raise OSError("peer exposes no loquor inbox (not a loquor device, or a stale GATT cache)")
+        backend = getattr(client, "_backend", None)
+        acquire = getattr(backend, "_acquire_mtu", None)
+        if acquire is not None:  # BlueZ reports the real MTU only after asking
+            try:
+                await acquire()
+            except Exception:
+                pass
+        try:
+            mtu = int(client.mtu_size) or DEFAULT_MTU
+        except Exception:
+            mtu = DEFAULT_MTU
+        return cls(client, characteristic, mtu)
 
     async def write(self, data: bytes) -> None:
-        await self.client.write_gatt_char(INBOX_UUID, data, response=False)
+        await self.client.write_gatt_char(self.characteristic, data, response=False)
 
     async def close(self) -> None:
         try:
@@ -237,6 +290,7 @@ class BleTransport(Transport):
         self._on_receive: OnReceive | None = None
         self._peers: dict[str, tuple[Any, float]] = {}  # key -> (device, last advertised)
         self._links: dict[str, Link] = {}
+        self._locks: dict[str, asyncio.Lock] = {}  # one connect/write at a time per peer
         self._inbox = Reassembler()
         self._adv_name: str | None = None
 
@@ -288,7 +342,7 @@ class BleTransport(Transport):
             try:
                 await self._write(key, device, data)
             except Exception as exc:
-                log.info("ble: %s unreachable (%s)", key, exc)
+                log.info("ble: %s unreachable (%s)", key, _describe(exc))
 
     async def send(self, to: Address, data: bytes) -> None:
         if to is None:
@@ -297,14 +351,15 @@ class BleTransport(Transport):
         await self._write(_key(to), to, data)
 
     async def _write(self, key: str, device: Any, data: bytes) -> None:
-        link = await self._link(key, device)
-        try:
-            for piece in chunk(data, link.mtu):
-                await link.write(piece)
-        except Exception:
-            self._links.pop(key, None)
-            await link.close()
-            raise
+        async with self._locks.setdefault(key, asyncio.Lock()):
+            link = await self._link(key, device)
+            try:
+                for piece in chunk(data, link.mtu):
+                    await link.write(piece)
+            except Exception:
+                self._links.pop(key, None)
+                await link.close()
+                raise
 
     async def _link(self, key: str, device: Any) -> Link:
         link = self._links.get(key)
@@ -312,6 +367,7 @@ class BleTransport(Transport):
             assert self.backend is not None, "transport not started"
             link = await asyncio.wait_for(self.backend.open(device), self.connect_timeout)
             self._links[key] = link
+            log.info("ble: connected to %s (mtu %d)", key, link.mtu)
         return link
 
     def _prune(self) -> None:
@@ -324,5 +380,18 @@ class BleTransport(Transport):
                     asyncio.get_running_loop().create_task(link.close())
 
 
+def _corebluetooth_advertisement(name: str) -> dict:
+    try:
+        from CoreBluetooth import CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey
+    except ImportError:  # not macOS (tests): the constants' plain values
+        CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey = "kCBAdvDataLocalName", "kCBAdvDataServiceUUIDs"
+    return {CBAdvertisementDataLocalNameKey: name, CBAdvertisementDataServiceUUIDsKey: []}
+
+
 def _key(device: Any) -> str:
     return str(getattr(device, "address", device))
+
+
+def _describe(exc: BaseException) -> str:
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
