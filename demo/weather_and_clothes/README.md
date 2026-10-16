@@ -5,6 +5,10 @@ Two agents, each with its own local LLM, standing in for two devices. The
 **Clothing Advisor** has a goal — recommend what to wear — but no weather.
 It finds the forecaster, asks, and recommends.
 
+**Real:** the agents, the protocol (keys, handshake, encryption), the LLM decisions.
+**Emulated:** the hardware — the sensor invents weather instead of reading a
+thermometer; the trigger prints a card instead of driving a display.
+
 Laptops are just the quickest hardware to demo on. Think of the two agents
 as a robot and a base station, two sensor nodes, or a handheld meeting a
 machine: the protocol, the profiles and the code are identical.

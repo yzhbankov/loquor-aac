@@ -7,6 +7,11 @@ chair measures temperature, heart rate, blood pressure and oxygen, asks
 patient's status, her LLM decides whom to see first, and the triage board
 appears on her screen.
 
+**Real:** the agents, the protocol (keys, handshake, encryption), the LLM
+decisions on both sides. **Emulated:** the hardware — the chair's monitor
+invents vitals instead of reading a cuff and an oximeter; the board prints
+to the terminal instead of a ward display.
+
 Everything specific to this demo is one sensor, one trigger and the
 profiles. The skills are the built-in ones.
 
