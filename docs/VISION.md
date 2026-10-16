@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../assets/loquor-logo-stacked-1024.png" width="200" alt="loquor">
+</p>
+
 # Vision
 
 ## The name

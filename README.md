@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/loquor-logo-horizontal.svg" width="420" alt="loquor — two devices, a signal between them">
+</p>
+
 # loquor-aac
 
 **loquor** — Latin for *"I speak"*. **aac** — agent-to-agent communication.
@@ -222,6 +226,7 @@ python -m pytest            # 110 tests, no model, network or radio needed, ~4 s
 | what goes on the wire, with diagrams | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
 | why the project exists, where it is going | [docs/VISION.md](docs/VISION.md) · [docs/POC_PLAN.md](docs/POC_PLAN.md) |
 | running and reading the demos | [weather & clothes](demo/weather_and_clothes/README.md) · [triage](demo/triage/README.md) |
+| the logo and app icon, and how to use them | [assets/](assets/README.md) |
 
 ## Status
 
