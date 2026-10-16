@@ -74,21 +74,23 @@ Where to look for what:
 | `reasoning` | only itself |
 | `extensions` | `protocol` |
 | `sensors`, `triggers` | only themselves — drivers know nothing about agents, peers or LLMs |
-| `agent`, `config`, `cli` | everything |
+| `agent`, `config`, `settings`, `tools`, `cli` | everything |
 
 ```
 src/loquor/
 ├── protocol/     identity.py envelope.py discovery.py card.py crypto.py node.py trust.py transport.py
-├── transports/   multicast.py (localhost, wifi) · memory.py (tests)        (ble.py planned)
+├── transports/   multicast.py (localhost, wifi) · ble.py (bluetooth) · memory.py (tests)
 ├── extensions/   query.py · session.py · relay.py · trust.py
-├── reasoning/    base.py · ollama.py · template.py
+├── reasoning/    base.py · ollama.py · template.py · trace.py (records every call)
 ├── sensors/      base.py (Sensor, Reading, FunctionSensor) · builtin.py (simulated, command)
 ├── triggers/     base.py (Trigger, FunctionTrigger) · builtin.py (console, command)
 ├── agent/        agent.py · tracker.py · context.py · skill.py · sensors.py · triggers.py
 │                 skills/{llm_answer,goal,sensor_report}.py
-├── config.py     profile JSON → objects ("type" lookup)
-└── cli.py
-run_agent.py · demo/ · tests/ (one file per section + the dependency rule)
+├── settings.py   device config: ~/.loquor/config.json (transport · model · beacon interval · logging)
+├── config.py     profile JSON → objects ("type" lookup) · profile.schema.json
+├── tools/        doctor.py · check.py · scaffold.py (init) · status.py · service.py
+└── cli.py        loquor run · check · doctor · init · status · trace · config · service
+install.sh · run_agent.py · demo/ · tests/ (one file per section + the dependency rule)
 ```
 
 ## Interfaces
@@ -258,19 +260,26 @@ skill A: ctx.ask(peer, "weather_forecast", {"question": ...})
   agent A: tracker.resolve(request_id, output) → ctx.ask returns output
 ```
 
-## Profile — `config.py`
+## Profile and device config — `config.py`, `settings.py`
+
+Two files configure a running agent, on purpose:
+
+- the **profile** (`agent.json`) says what the agent *is*: name,
+  description, persona, sensors, triggers, skills. It travels with the
+  agent's code and is the same on every device.
+- the **device config** (`~/.loquor/config.json`) says what the device
+  *has*: which transport, which model its hardware can run, how often to
+  beacon, how much to log. `install.sh` writes it once.
+
+A profile may pin a transport, a reasoner or a beacon interval; the
+command line overrides both. `build_agent()` applies the precedence and
+instantiates every part through the one `"type"` lookup:
 
 ```json
 {
   "name": "Weather Station",
   "description": "One sentence other agents read to decide whether you can help them.",
-  "system_prompt": "Default persona for every skill that takes one.",
-  "visibility": "visible",
-  "key_file": "~/.loquor/keys/weather-station.key",
-  "pinned_keys": "~/.loquor/pinned_keys.json",
-  "relay": false,
-  "transport": { "type": "wifi" },
-  "reasoner":  { "type": "ollama", "model": "qwen2.5:3b" },
+  "system_prompt_file": "prompt.txt",
   "sensors":  [ { "type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5 } ],
   "triggers": [ { "type": "console", "name": "print" } ],
   "skills": [
@@ -283,9 +292,23 @@ skill A: ctx.ask(peer, "weather_forecast", {"question": ...})
 
 Every part is `{"type": ..., **constructor kwargs}`; `type` is a built-in
 name, `"module:Class"` for an installed module, or `"file.py:Class"` for a
-file next to the profile. Sensors and triggers may be plain functions. Only
-`name`, `description` and `skills` are required. Command-line `--transport`, `--interface`, `--model` and
-`--visibility` override the profile.
+file next to the profile. Sensors and triggers may be plain functions.
+`profile.schema.json` validates the whole document before anything is
+built. Every field: [USAGE.md](USAGE.md#profile).
+
+## Operator tools — `tools/`, `cli.py`
+
+The agent stays unaware of them; they read what it exposes:
+
+- `check` builds a profile and reads each sensor once through the hubs.
+- `status` serialises `snapshot(agent)` — peers from the node's
+  directory, readings from the `SensorHub`, `TriggerHub.history`, the
+  `TracingReasoner`'s last calls, goal results — to a file every two
+  seconds; `loquor status` reads the file. No socket: works under a
+  service manager and on every OS.
+- `trace` reads the `TracingReasoner`'s JSON lines.
+- `doctor` checks the device; `scaffold` writes a starter agent;
+  `service` writes a systemd or launchd unit.
 
 ## What is deliberately not here
 
@@ -310,3 +333,5 @@ file next to the profile. Sensors and triggers may be plain functions. Only
 4. **Watch skill** — "every N seconds, put these readings in front of the
    LLM, let it pick a trigger": the sensor → LLM → trigger loop with no
    peer involved. All the parts exist; it is a 30-line skill.
+5. **A PyPI release**, so a device needs `pip install loquor-aac[ble]`
+   and no clone.

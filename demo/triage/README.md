@@ -41,14 +41,8 @@ sequenceDiagram
 
 ## 1. Setup (once per device)
 
-Needs Python 3.10+ and [Ollama](https://ollama.com). In the repo root:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-ollama pull qwen2.5:3b
-```
+In the repo root, `./install.sh`, then `source .venv/bin/activate`
+(details in [docs/INSTALL.md](../../docs/INSTALL.md)).
 
 ## 2. Run on one computer
 
@@ -56,10 +50,10 @@ Four terminals in the repo root with the venv active. Chairs first (any
 order), then the nurse:
 
 ```bash
-python run_agent.py demo/triage/chair_1.json --wire off    # chest pain
-python run_agent.py demo/triage/chair_2.json --wire off    # flu
-python run_agent.py demo/triage/chair_3.json --wire off    # breathing difficulty
-python run_agent.py demo/triage/nurse_agent.json --wire off
+loquor run demo/triage/chair_1.json        # chest pain
+loquor run demo/triage/chair_2.json        # flu
+loquor run demo/triage/chair_3.json        # breathing difficulty
+loquor run demo/triage/nurse_agent.json
 ```
 
 Two chairs are enough: the nurse concludes 15 s after the last answer if
@@ -102,9 +96,11 @@ triage-nurse-…: firing triage_board — the order is decided and must reach th
 ╰────────────────────────────────────────────────────────────────────╯
 ```
 
-Each chair's terminal shows the question arriving and its own assessment
-leaving — grounded in its sensor reading, which `-v` prints every time it
-is read.
+Each chair's terminal shows the question arriving (`triage-nurse-… asks
+for patient_status`), its `LLM` call and its assessment leaving. `loquor
+status` from a fifth terminal shows every chair's current reading and the
+nurse's goal as it progresses; `loquor trace "Triage Chair 1" --full` the
+exact vitals the chair's LLM saw.
 
 Where the decisions are made:
 
@@ -123,12 +119,13 @@ Things to try:
 ## 3. Run on several devices
 
 Chairs and the nurse's device on one Wi-Fi or hotspot, each set up as in
-step 1, `--transport wifi` on every command. A chair can be a Raspberry Pi
-with a cuff on its UART; the nurse's device anything with Python and a local
-model.
+step 1 with `loquor config set transport wifi` (or `--transport wifi` on
+every command). A chair can be a Raspberry Pi with a cuff on its UART —
+`loquor service install chair_1.json --now` keeps it running after a
+reboot; the nurse's device anything with Python and a local model.
 
-**Over Bluetooth**, with no network at all: `pip install -e ".[ble]"` on
-every device, then `--transport bluetooth` on every command instead. The
+**Over Bluetooth**, with no network at all: `loquor doctor --transport
+bluetooth` on every device, then `--transport bluetooth` instead. The
 nurse's device connects to each chair over GATT as it hears its beacon;
 with three chairs allow ~30 s before the round starts, and raise
 `"settle"` in `nurse_agent.json` if a chair is slow to connect. See the
@@ -138,8 +135,8 @@ weather demo's README for Bluetooth prerequisites and troubleshooting.
 
 | Problem | Fix |
 |---|---|
-| nurse concludes with fewer chairs than expected | they took longer than 15 s to answer — raise `"settle"`, or use a smaller model on the chairs (`--model qwen2.5:1.5b`) |
-| nurse never starts | it needs to hear at least one chair; same `--transport` on all |
-| Bluetooth: chairs never `met` | Bluetooth off or not allowed for the terminal; `pip install -e ".[ble]"` missing (the error says so) |
-| `no trigger fired: invalid input…` | the model's board did not match the schema; it is logged, nothing wrong is shown — rerun or use a larger model |
-| `model ... is not available in Ollama` | `ollama pull qwen2.5:3b` |
+| nurse concludes with fewer chairs than expected | they took longer than 15 s to answer (`LLM  … s` lines) — raise `"settle"`, or a smaller model on the chairs (`loquor config set model qwen2.5:1.5b`) |
+| nurse never starts | it needs to hear at least one chair; same transport on all (`loquor config show`); `loquor status` on the nurse lists the chairs it sees |
+| Bluetooth: chairs never `met` | `loquor doctor --transport bluetooth` on each device |
+| `no trigger fired: invalid input…` | the model's board did not match the schema; `loquor trace "Triage Nurse"` shows the proposal — rerun or use a larger model |
+| `model ... is not available in Ollama` | `ollama pull <model>`, or `loquor doctor` |
