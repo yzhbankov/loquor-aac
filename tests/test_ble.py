@@ -401,3 +401,21 @@ async def test_connected_peers_stay_alive_without_advertisements():
     finally:
         await a.stop()
         await b.stop()
+
+
+def test_bleak_local_service_noise_is_filtered(caplog):
+    import logging
+    from loquor.transports.ble import _quiet_bleak_local_service_noise
+
+    _quiet_bleak_local_service_noise()
+    logger = logging.getLogger("dbus_fast.message_bus")
+    with caplog.at_level(logging.ERROR, logger="dbus_fast.message_bus"):
+        try:
+            {}["Device"]
+        except KeyError:
+            logger.exception("A message handler raised an exception: 'Device'")
+        try:
+            {}["Other"]
+        except KeyError:
+            logger.exception("some other failure")
+    assert [r.getMessage() for r in caplog.records] == ["some other failure"]
