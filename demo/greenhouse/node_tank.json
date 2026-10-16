@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
+  "name": "Tank Node",
+  "description": "I am a sensor node on the irrigation water tank. I measure the water level in percent.",
+  "sensors": [
+    { "type": "simulated", "name": "water_level", "min": 0, "max": 100, "start": 62, "step": 2, "unit": "%", "interval": 5,
+      "description": "Water left in the irrigation tank; the pump must not run below 10 %." }
+  ],
+  "skills": [ { "type": "sensor_report" } ]
+}

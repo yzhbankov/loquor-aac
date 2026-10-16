@@ -41,6 +41,16 @@ loquor config set transport wifi         # same Wi-Fi or a phone hotspot (no int
 loquor config set transport bluetooth    # or no network at all
 ```
 
+Not every device needs a brain. A **sensor node** only measures and
+reports — no LLM, no Ollama, a Raspberry Pi Zero is enough — and any
+agent in range pulls its readings as data:
+
+```bash
+./install.sh --node                      # on the small device: no Ollama, no model
+loquor init my_node --node               # sensors + sensor_report, nothing else
+loquor run my_node/agent.json
+```
+
 What you will see, from the second device's agent:
 
 ```
@@ -105,6 +115,19 @@ class Pump(Trigger):
 `loquor check my_agent/agent.json` loads it all, reads every sensor
 once and tells you what is wrong before anything goes on the air.
 
+**Two roles.** Put an LLM where a decision is made; put a **node** where
+something is only measured. A node is a profile with sensors and the
+`sensor_report` skill: it runs the same protocol (beacons, handshake,
+encryption) and answers with numbers, not prose. An agent with the
+`collect` skill pulls every node's readings each round, reasons over the
+table once, and fires a trigger if the readings call for it:
+
+```json
+{ "type": "collect", "interval": 30,
+  "goal": "Keep soil moisture above 30 %; water only if the tank is above 10 %.",
+  "triggers": ["pump"] }
+```
+
 **The LLM's behaviour** is `prompt.txt` (its persona; `{sensors}` is
 replaced by the current readings) and `description` in `agent.json`
 (what other agents' LLMs read to decide whether to ask you). **The
@@ -131,7 +154,7 @@ triggers and skills: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Two demos
 
-Both run real agents, real protocol, real local LLMs. Only the hardware
+All run real agents, real protocol, real local LLMs. Only the hardware
 is **emulated**: the sensors invent plausible readings and the triggers
 print to the terminal instead of driving a display or a relay.
 
@@ -139,6 +162,7 @@ print to the terminal instead of driving a display or a relay.
 |---|---|---|
 | [**Weather & Clothes**](demo/weather_and_clothes/README.md) | two agents: a weather station with a sensor, and an advisor that finds it, asks for the forecast and shows an outfit card | 1 sensor, 1 trigger, 2 profiles |
 | [**Emergency Triage**](demo/triage/README.md) | three triage chairs measuring patients, and a nurse's device that asks all of them, decides whom to see first and shows the board | 1 sensor, 1 trigger, 4 profiles |
+| [**Greenhouse**](demo/greenhouse/README.md) | three sensor **nodes** with no LLM, and one controller that collects their readings every 15 s, waters and vents | 0 sensors to write, 2 triggers, 4 profiles |
 
 ```bash
 # weather & clothes: two terminals on one computer (the default transport is localhost)
@@ -195,10 +219,10 @@ Five layers, one small interface each. Lower layers never import upper ones.
 ```
  ~/.loquor/config.json  (this device: transport · model · beacon interval · logging)
  my_agent/agent.json ──▶ agent      dispatches requests to skills; hubs for sensors and triggers
-                          ├─ skills     business logic: llm_answer · goal · sensor_report · yours
+                          ├─ skills     business logic: llm_answer · goal · collect · sensor_report · yours
                           ├─ sensors    drivers that produce readings            (yours: one class)
                           ├─ triggers   drivers that perform actions             (yours: one class)
-                          ├─ reasoning  the LLM behind one method                (Ollama · template · tracing)
+                          ├─ reasoning  the LLM behind one method                (Ollama · none · template · tracing)
                           └─ protocol   identity · beacons · handshake · encrypted envelopes (AMP v1)
                                └─ transports   bytes over a link: localhost · wifi · bluetooth
  loquor  (doctor · init · check · run · status · trace · config · service)
@@ -212,7 +236,7 @@ reasons behind them: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest            # 110 tests, no model, network or radio needed, ~4 s
+python -m pytest            # 117 tests, no model, network or radio needed, ~5 s
 ```
 
 ## Documentation map
@@ -234,7 +258,7 @@ python -m pytest            # 110 tests, no model, network or radio needed, ~4 s
 |---|---|
 | AMP v1: persisted identity, signed CBOR envelopes, beacons, handshake, encryption, acknowledgements, visibility policies | Session transports (bulk data over TCP / L2CAP) |
 | Extensions: capability queries, session negotiation, relay store-and-forward, trust levels with pinned keys | Pairing ceremony (QR / fingerprint) from the CLI |
-| Sensors and triggers with schema-validated LLM proposals; `goal` skill that gathers from many peers | A watch skill: readings → LLM → trigger on a timer |
+| Sensors and triggers with schema-validated LLM proposals; `goal` skill that gathers from many peers; `collect` skill and LLM-free sensor nodes | A reference node firmware for microcontrollers (ESP32) |
 | Wi-Fi and Bluetooth transports, verified between a Mac and an Ubuntu laptop | UWB proximity; relay gossip message |
 | One-script install, `loquor` CLI with doctor / init / check / status / trace, device config, boot service | A PyPI release |
 

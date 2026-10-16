@@ -16,7 +16,7 @@ def home(tmp_path, monkeypatch):
     return tmp_path / "home"
 
 
-PROFILE = {"name": "P", "description": "d", "skills": [{"type": "sensor_report"}]}
+PROFILE = {"name": "P", "description": "d", "skills": [{"type": "llm_answer", "capability": "c", "system_prompt": "s"}]}
 
 
 def test_defaults_when_there_is_no_file(home):

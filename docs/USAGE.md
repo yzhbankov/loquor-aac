@@ -10,6 +10,7 @@ writing your own sensors, triggers and skills is in
 ```
 loquor doctor                        is this device ready? (Python, Ollama, model, radio)
 loquor init my_agent                 a working agent to start from: profile, prompt, a sensor, a trigger
+loquor init my_node --node           a sensor node: sensors + sensor_report, no LLM
 loquor check my_agent/agent.json     build it, read each sensor once, check the model — nothing on the air
 loquor run   my_agent/agent.json     run it until Ctrl-C
 loquor status ["My Agent"]           what the running agents see, read, fired and decided
@@ -126,6 +127,7 @@ agent, so a profile runs unchanged on a laptop, a Pi or a robot.
 | `beacon_interval` | `10` | seconds between beacons; lower finds peers faster, costs radio time |
 | `wire` | `off` | envelope log level: `off`, `no-handshake`, `all` |
 | `trace` | `true` | record every LLM call to `~/.loquor/run/<name>.trace.jsonl` |
+| `llm` | `true` | `false` on a sensor node: no Ollama here; `doctor` does not look for it and `run` refuses profiles that need one |
 
 Precedence, highest first: command-line flag → profile → device config
 → default. `LOQUOR_MODEL` in the environment overrides the model for
@@ -169,7 +171,7 @@ Only `name`, `description` and `skills` are required.
 | `pinned_keys` | path | level-1 trust store; default `~/.loquor/pinned_keys.json` |
 | `relay` | bool | store and forward envelopes for peers out of reach; default false |
 | `transport` | part | pins a transport: `{"type": "wifi"}`; usually left to the device config |
-| `reasoner` | part | pins the LLM: `{"type": "ollama", "model": "…"}` or `{"type": "template"}`; usually left to the device config |
+| `reasoner` | part | pins the LLM: `{"type": "ollama", "model": "…"}`, `{"type": "template"}` or `{"type": "none"}`; usually left out: the device config picks the model, and a profile whose skills need no LLM gets `none` |
 | `sensors` | [part] | drivers that produce readings; each needs a unique `name` |
 | `triggers` | [part] | drivers that perform actions; each needs a unique `name` |
 | `skills` | [part] | at least one; what the agent offers and pursues |
@@ -187,14 +189,33 @@ and trigger types may be plain functions. Skills may use
 |---|---|---|
 | skill | `llm_answer` | `capability`, `system_prompt`, `temperature` (0.2), `sensors` ([names]), `max_chars` (3000) — answers `{question}` with `{answer}`, grounded in the named sensors |
 | skill | `goal` | `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]), `min_answers` (1), `settle` (0 s) — finds peers that can help, asks them, concludes, proposes one of its triggers |
-| skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) — the readings as data, for peers that want numbers |
+| skill | `collect` | `interval` (30 s), `capability` (`sensor_report`), `peers` ([node names]; default all), `goal`, `system_prompt`, `temperature` (0.2), `triggers` ([names]), `sensors` ([own names]), `min_nodes` (1) — pulls every node's readings each round; with a `goal` reasons over the table once per round and may fire a trigger; offers the table as `collected_readings` |
+| skill | `sensor_report` | `sensors` ([names]; default all), `min_trust` (0) — the readings as data, for peers that want numbers; the only skill a **node** needs |
 | sensor | `simulated` | `name`, `min`, `max`, `unit`, `step`, `interval`, `description`, `start` |
 | sensor | `command` | `name`, `command`, `unit`, `interval`, `description`, `timeout` (10) — stdout is the value: JSON, a number, or text |
 | trigger | `console` | `name` (`print`), `description`, `input_schema` (`{text}`), `template` |
 | trigger | `command` | `name`, `command`, `description`, `input_schema`, `timeout` (30) — the input arrives as JSON on stdin |
 | reasoner | `ollama` | `model`, `base_url`, `temperature` |
 | reasoner | `template` | — (no model; deterministic text, for tests and CI) |
+| reasoner | `none` | — (no LLM at all: a sensor node; chosen automatically when no skill needs one) |
 | transport | `localhost`, `wifi`, `bluetooth` | `interface` (wifi), `port` (47600) |
+
+### Nodes and agents
+
+A profile whose skills never call a model — `sensor_report`, or
+`collect` without a goal — is a **node**: it gets reasoner `none`, needs
+no Ollama, and `loquor check` says `role: node (no LLM)`. It still runs
+the whole protocol and answers requests with data. `loquor init --node`
+writes one; `./install.sh --node` prepares a device for one (and sets
+`llm false` so `doctor` stops asking for Ollama).
+
+An **agent** with the `collect` skill pulls readings from every node in
+range: each round it sends `sensor_report` to each node and receives
+`{"readings": {name: {value, unit, at}}}` in an encrypted envelope
+addressed to it — no model on the node, no prose in between. With a
+`goal` it then thinks once per round over the table of all nodes' readings
+and its own sensors, and may fire one of its `triggers`. `loquor status`
+shows the table; `loquor trace` the prompt it was turned into.
 
 ### The LLM's behaviour
 
@@ -237,6 +258,8 @@ The default log is the agent's story, one line per event:
 | `asking … for …` / `… answered:` | a request this agent sent and what came back |
 | `LLM  1.8 s  … -> …` | one model call: duration, prompt start, reply start (`loquor trace` has the whole thing) |
 | `reasoning about …` | the `goal` skill deciding whether a peer can help |
+| `collected from …: …` | the `collect` skill received a node's readings as data |
+| `round N: …` | the `collect` skill's decision for that round: an action, or why none |
 | `firing …` / `TRIGGER …` | a validated proposal; the trigger ran, with its input and result |
 | `no trigger fired: …` | the proposal did not fit any allowed trigger's schema, with the reason |
 | `lost …` | three beacon intervals of silence |

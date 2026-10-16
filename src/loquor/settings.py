@@ -46,6 +46,7 @@ class Settings:
     beacon_interval: float = DEFAULT_BEACON_INTERVAL
     wire: str = "off"  # envelope log: off | no-handshake | all
     trace: bool = True  # record every LLM call to run/<agent>.trace.jsonl
+    llm: bool = True  # False on a sensor node: no Ollama here, doctor does not look for it
 
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
@@ -125,7 +126,7 @@ def _coerce(key: str, value: Any) -> Any:
         if value not in WIRE_LEVELS:
             raise ValueError(f"wire must be one of {', '.join(WIRE_LEVELS)}, not {value!r}")
         return value
-    if key == "trace":
+    if key in ("trace", "llm"):
         if isinstance(value, bool):
             return value
         text = str(value).lower()
@@ -133,5 +134,5 @@ def _coerce(key: str, value: Any) -> Any:
             return True
         if text in ("false", "no", "off", "0"):
             return False
-        raise ValueError(f"trace must be true or false, not {value!r}")
+        raise ValueError(f"{key} must be true or false, not {value!r}")
     return value

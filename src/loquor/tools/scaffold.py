@@ -160,18 +160,76 @@ Reference: `docs/USAGE.md` (profile fields, commands) and `docs/DEVELOPMENT.md`
 """
 
 
-def init(directory: Path, name: str | None = None, *, force: bool = False) -> list[Path]:
+NODE_PROFILE = """{{
+  "$schema": "{schema}",
+  "name": "{name}",
+  "description": "I am {name}, a sensor node. I measure the load and temperature at my device and report the numbers to any agent that asks.",
+  "sensors": [
+    {{ "type": "sensors.py:load_average", "name": "load", "interval": 10 }},
+    {{ "type": "sensors.py:Thermometer", "name": "temperature", "interval": 10 }}
+  ],
+  "skills": [
+    {{ "type": "sensor_report" }}
+  ]
+}}
+"""
+
+NODE_README = """# {name}
+
+A **sensor node** made by `loquor init --node`: it measures and reports,
+and has no LLM. It runs the same protocol as a full agent — beacons,
+handshake, encryption — and answers `sensor_report` requests with its
+readings as data. No Ollama, no model: a Raspberry Pi Zero is enough
+(`./install.sh --node` on the device).
+
+| file | what it is |
+|---|---|
+| `agent.json` | the profile: the node's name, description and sensors |
+| `sensors.py` | what it measures: a function and a class, both runnable as they are |
+
+```bash
+loquor check {dir}/agent.json     # loads everything and reads each sensor once
+loquor run   {dir}/agent.json     # on the air; Ctrl-C to stop
+loquor status "{name}"            # from another terminal: peers and readings
+```
+
+Next steps:
+
+1. **Read your own instrument** in `sensors.py` (`Thermometer.read`), or
+   wire a shell command with no Python at all:
+   `{{ "type": "command", "name": "cpu_temp", "command": "vcgencmd measure_temp | tr -dc '0-9.'", "unit": "°C", "interval": 10 }}`.
+2. **Say what you measure** in `description`: the agents that find this
+   node read it to decide whether your numbers are what they need.
+3. **Point an agent at it**: on a device with an LLM, a profile with
+   `{{ "type": "collect", "interval": 30, "goal": "…", "triggers": [...] }}`
+   pulls the readings from every node in range and acts on them
+   (`loquor init` writes an agent; see `demo/greenhouse` for a complete one).
+4. **Keep it running**: `loquor service install {dir}/agent.json --now`.
+
+Reference: `docs/USAGE.md`.
+"""
+
+
+def init(directory: Path, name: str | None = None, *, force: bool = False, node: bool = False) -> list[Path]:
     """Write the starter files into ``directory``; returns the paths written."""
     directory = Path(directory)
     name = name or directory.resolve().name.replace("_", " ").replace("-", " ").strip().title() or "My Agent"
     capability = f"{slug(name).replace('-', '_') or 'device'}_status"
-    files = {
-        "agent.json": PROFILE.format(schema=SCHEMA_URL, name=name, capability=capability),
-        "prompt.txt": PROMPT.format(name=name),
-        "sensors.py": SENSORS.format(name=name),
-        "triggers.py": TRIGGERS.format(name=name),
-        "README.md": README.format(name=name, dir=directory.as_posix().rstrip("/") or "."),
-    }
+    shown = directory.as_posix().rstrip("/") or "."
+    if node:
+        files = {
+            "agent.json": NODE_PROFILE.format(schema=SCHEMA_URL, name=name),
+            "sensors.py": SENSORS.format(name=name),
+            "README.md": NODE_README.format(name=name, dir=shown),
+        }
+    else:
+        files = {
+            "agent.json": PROFILE.format(schema=SCHEMA_URL, name=name, capability=capability),
+            "prompt.txt": PROMPT.format(name=name),
+            "sensors.py": SENSORS.format(name=name),
+            "triggers.py": TRIGGERS.format(name=name),
+            "README.md": README.format(name=name, dir=shown),
+        }
     existing = [f for f in files if (directory / f).exists()]
     if existing and not force:
         raise FileExistsError(f"{directory} already has {', '.join(existing)}; use --force to overwrite")

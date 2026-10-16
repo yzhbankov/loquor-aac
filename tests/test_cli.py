@@ -78,6 +78,11 @@ def test_init_then_check(capsys, tmp_path):
     assert code == 0 and "Greenhouse" in out and "Ready." in out
     code, out = run_cli(["init", str(target)], capsys)
     assert code == 1 and "--force" in out
+    node = tmp_path / "shed"
+    code, out = run_cli(["init", str(node), "--node"], capsys)
+    assert code == 0 and "triggers.py" not in out and "prompt.txt" not in out
+    code, out = run_cli(["check", str(node / "agent.json"), "--transport", "localhost"], capsys)  # no --no-llm needed
+    assert code == 0 and "node (no LLM)" in out and "Ready." in out
 
 
 def test_status_and_trace_without_running_agents(capsys, home):

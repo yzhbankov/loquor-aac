@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
+  "name": "Soil Node",
+  "description": "I am a sensor node in the greenhouse bed. I measure soil moisture in percent and soil temperature.",
+  "sensors": [
+    { "type": "simulated", "name": "soil_moisture", "min": 15, "max": 60, "start": 24, "step": 3, "unit": "%", "interval": 5,
+      "description": "Soil moisture in the bed; below 30 % the plants wilt." },
+    { "type": "simulated", "name": "soil_temperature", "min": 14, "max": 30, "start": 21, "step": 0.5, "unit": "°C", "interval": 5 }
+  ],
+  "skills": [ { "type": "sensor_report" } ]
+}

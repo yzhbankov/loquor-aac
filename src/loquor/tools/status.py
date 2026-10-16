@@ -83,6 +83,12 @@ def snapshot(agent: Agent, *, extra: dict[str, Any] | None = None) -> dict[str, 
             }
             for s in agent.skills if hasattr(s, "goal") and hasattr(s, "done")
         ],
+        "collected": [
+            {"rounds": s.rounds, "goal": s.goal or None, "assessment": s.assessment,
+             "nodes": [{"label": n["label"], "age_s": round(time.time() - n["at"], 1), "readings": n["readings"]}
+                       for n in s.collected.values()]}
+            for s in agent.skills if hasattr(s, "collected") and hasattr(s, "rounds")
+        ],
     }
     if extra:
         data.update(extra)
@@ -221,5 +227,14 @@ def format_status(data: dict[str, Any]) -> str:
         lines.append(f"  goal       : {g.get('goal')}  [{state}]")
         if g.get("outcome"):
             lines.append(f"    outcome  : {_snip(g['outcome'], 300)}")
+    for c in data.get("collected") or []:
+        lines.append(f"  collected  : {len(c.get('nodes') or [])} node(s), {c.get('rounds')} round(s)"
+                     + (f", goal: {_snip(c['goal'], 80)}" if c.get("goal") else ""))
+        for n in c.get("nodes") or []:
+            readings = "; ".join(f"{k}={v.get('value') if isinstance(v, dict) else v} {v.get('unit', '') if isinstance(v, dict) else ''}".rstrip()
+                                 for k, v in (n.get("readings") or {}).items())
+            lines.append(f"    - {n.get('label')} ({n.get('age_s')} s ago): {readings}")
+        if c.get("assessment"):
+            lines.append(f"    assessment: {_snip(c['assessment'], 300)}")
     lines.append(f"  status file: {data.get('status_file')}")
     return "\n".join(lines)

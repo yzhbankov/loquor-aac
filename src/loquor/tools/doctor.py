@@ -40,8 +40,10 @@ class Check:
 
 async def run_checks(settings: Settings, *, transport: str | None = None, llm: bool = True) -> list[Check]:
     checks = [check_python(), check_package(), *check_dependencies(), check_home(), check_config()]
-    if llm:
+    if llm and settings.llm:
         checks += await check_ollama(settings)
+    elif llm:
+        checks.append(Check("ollama", OK, "not needed: this device is a sensor node (llm false in the device config)"))
     checks += check_transport(transport or settings.transport)
     return checks
 
@@ -96,7 +98,8 @@ def check_config() -> Check:
         s = Settings.load(path)
     except ValueError as exc:
         return Check("device config", FAIL, str(exc), f"fix or delete {path}")
-    return Check("device config", OK, f"transport {s.transport}, model {s.model}, beacons every {s.beacon_interval:g} s")
+    role = f"model {s.model}" if s.llm else "sensor node, no LLM"
+    return Check("device config", OK, f"transport {s.transport}, {role}, beacons every {s.beacon_interval:g} s")
 
 
 async def check_ollama(settings: Settings) -> list[Check]:

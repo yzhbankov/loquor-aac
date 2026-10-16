@@ -16,6 +16,7 @@ from loquor.agent.skill import Skill
 class SensorReport(Skill):
     capability = "sensor_report"
     description = "Latest readings from this agent's sensors."
+    needs_reasoner = False  # pure data: this is what a sensor node offers
     input_schema = {"type": "object", "properties": {"sensor": {"type": "string"}}}
     output_schema = {"type": "object", "properties": {"readings": {"type": "object"}}, "required": ["readings"]}
 

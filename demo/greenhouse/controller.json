@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
+  "name": "Greenhouse Controller",
+  "description": "I run the greenhouse: I collect readings from the sensor nodes, water the beds and open the roof vent.",
+  "system_prompt_file": "controller_prompt.txt",
+  "triggers": [
+    { "type": "actuators.py:Pump" },
+    { "type": "actuators.py:Vent" }
+  ],
+  "skills": [
+    {
+      "type": "collect",
+      "interval": 15,
+      "goal": "Keep the plants healthy: soil moisture above 30 %, air below 35 °C. Water only if the tank has more than 10 % left. Act only when a reading calls for it.",
+      "triggers": ["pump", "vent"],
+      "temperature": 0
+    }
+  ]
+}

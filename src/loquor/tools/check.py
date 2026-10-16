@@ -46,7 +46,9 @@ async def check_profile(path: Path, settings: Settings, *, llm: bool = True, **o
 
 
 def describe(agent: Agent) -> list[str]:
-    lines = [f"{agent.name} — {agent.description}", f"  identity   : {agent.agent_id.hex()}",
+    role = "node (no LLM)" if agent.reasoner.name == "none" else "agent"
+    lines = [f"{agent.name} — {agent.description}", f"  role       : {role}",
+             f"  identity   : {agent.agent_id.hex()}",
              f"  model      : {getattr(agent.reasoner, 'model', None) or agent.reasoner.name}",
              f"  transport  : {_transport_name(agent)}",
              f"  visibility : {agent.node.visibility.value}, beacon every {agent.node.beacon_interval:g} s"]
@@ -109,6 +111,8 @@ async def check_reasoner(agent: Agent, settings: Settings) -> list[Check]:
     from loquor.reasoning import OllamaReasoner, ollama_available  # noqa: PLC0415
 
     reasoner = getattr(agent.reasoner, "inner", agent.reasoner)
+    if reasoner.name == "none":
+        return [Check("reasoner", OK, "none: a sensor node, no LLM needed")]
     if not isinstance(reasoner, OllamaReasoner):
         return [Check("reasoner", OK, f"{reasoner.name} (no model needed)")]
     if not await ollama_available(reasoner.base_url):

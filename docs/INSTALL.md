@@ -27,6 +27,7 @@ What it does, in order, skipping anything already done:
 Flags:
 
 ```
+--node                a sensor node: no Ollama, no model; sets `llm false` in the device config
 --model NAME          use this model instead of the one chosen by RAM
 --transport T         save the transport too: localhost | wifi | bluetooth
 --no-ollama           skip Ollama and the model (you run them elsewhere, or use the template reasoner)
@@ -72,9 +73,11 @@ failure. Nothing else needs to pass before `loquor run` works.
 
 - The script uses `sudo apt-get` for Python, venv and BlueZ.
 - Raspberry Pi 4 (4 GB) and 5: `qwen2.5:1.5b` answers in a few seconds;
-  `qwen2.5:3b` works on the 8 GB models but is slow. Pi Zero / 3: use
-  `qwen2.5:0.5b`, or run Ollama on another machine on the same network
-  and point to it: `loquor config set ollama_url http://192.168.1.10:11434`.
+  `qwen2.5:3b` works on the 8 GB models but is slow. Pi Zero / 3: make it
+  a **sensor node** (`./install.sh --node`, no LLM at all) and let an
+  agent elsewhere do the thinking; or run Ollama on another machine on
+  the same network and point to it:
+  `loquor config set ollama_url http://192.168.1.10:11434`.
 - For Bluetooth between two laptops, see below.
 
 ### Fedora, Arch, other Linux
@@ -145,7 +148,7 @@ and `loquor doctor` prints the installed version.
 | path | what |
 |---|---|
 | `.venv/` in the repo | the Python environment and the `loquor` command |
-| `~/.loquor/config.json` | this device's transport, model, beacon interval, logging |
+| `~/.loquor/config.json` | this device's transport, model (or `llm false` for a node), beacon interval, logging |
 | `~/.loquor/keys/<name>.key` | an agent's identity, created on its first run |
 | `~/.loquor/pinned_keys.json` | peers you have pinned (trust level 1) |
 | `~/.loquor/run/<name>.json` | a running agent's status, read by `loquor status` |

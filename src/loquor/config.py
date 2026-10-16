@@ -23,6 +23,11 @@ Transport, model and beacon interval come from the device config
 ``"reasoner"``, ``"beacon_interval"``) or the command line overrides them.
 The full list of fields is ``profile.schema.json`` next to this module.
 
+A profile whose skills never call the reasoner (only ``sensor_report``,
+say) is a **node**: it gets ``reasoner "none"`` and needs no Ollama.
+``"reasoner": {"type": "none"}`` says so explicitly; combined with a skill
+that needs an LLM it is refused at startup.
+
 Sensors and triggers may also be plain functions; they are wrapped
 automatically. That ``"type"`` lookup is the whole extension mechanism.
 """
@@ -45,13 +50,13 @@ from loquor.agent.agent import Agent
 from loquor.agent.skills import BUILTIN_SKILLS
 from loquor.protocol.discovery import Visibility, slug
 from loquor.protocol.identity import Identity
-from loquor.reasoning import OllamaReasoner, TemplateReasoner
+from loquor.reasoning import NoReasoner, OllamaReasoner, TemplateReasoner
 from loquor.sensors import BUILTIN_SENSORS, FunctionSensor
 from loquor.settings import Settings, loquor_home
 from loquor.transports import TRANSPORTS, make_transport
 from loquor.triggers import BUILTIN_TRIGGERS, FunctionTrigger
 
-BUILTIN_REASONERS = {"ollama": OllamaReasoner, "template": TemplateReasoner}
+BUILTIN_REASONERS = {"ollama": OllamaReasoner, "template": TemplateReasoner, "none": NoReasoner}
 
 REQUIRED_FIELDS = {"name", "description", "skills"}
 
@@ -146,13 +151,6 @@ def build_agent(
     elif settings.interface and "interface" not in transport_spec and transport_spec.get("type") == "wifi":
         transport_spec["interface"] = settings.interface
 
-    reasoner_spec = dict(profile.get("reasoner") or {"type": "ollama"})
-    if reasoner_spec.get("type") == "ollama":
-        reasoner_spec.setdefault("model", settings.model)
-        reasoner_spec.setdefault("base_url", settings.ollama_url)
-    if model:
-        reasoner_spec["model"] = model
-
     if beacon_interval is None:
         beacon_interval = float(profile.get("beacon_interval") or settings.beacon_interval)
 
@@ -161,6 +159,18 @@ def build_agent(
                     base_dir=base_dir)
         for spec in profile["skills"]
     ]
+    thinking = [type(s).__name__ for s in skills if s.needs_reasoner]
+    reasoner_spec = dict(profile.get("reasoner") or ({"type": "ollama"} if thinking else {"type": "none"}))
+    if reasoner_spec.get("type") == "none" and thinking:
+        raise ValueError(
+            f"profile says reasoner \"none\" but {', '.join(thinking)} need an LLM; "
+            "drop those skills to make this a node, or choose a reasoner"
+        )
+    if reasoner_spec.get("type") == "ollama":
+        reasoner_spec.setdefault("model", settings.model)
+        reasoner_spec.setdefault("base_url", settings.ollama_url)
+    if model and reasoner_spec.get("type") != "none":
+        reasoner_spec["model"] = model
     sensors = [instantiate(spec, BUILTIN_SENSORS, "sensor", wrap=FunctionSensor, base_dir=base_dir)
                for spec in profile.get("sensors") or []]
     triggers = [instantiate(spec, BUILTIN_TRIGGERS, "trigger", wrap=FunctionTrigger, base_dir=base_dir)

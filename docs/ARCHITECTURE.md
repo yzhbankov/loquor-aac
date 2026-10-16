@@ -43,7 +43,7 @@ Where to look for what:
 │ agent  — orchestrator (no business logic)                                  │
 │   capability dispatch · RequestTracker · trust check                       │
 │   SensorHub (latest readings)      TriggerHub (propose → validate → fire)  │
-│   skills/  llm_answer · goal · sensor_report · <yours>    ← business logic │
+│   skills/  llm_answer · goal · collect · sensor_report · <yours>  ← logic │
 │            each gets a Context: reasoner, peers, ask(), sensors, triggers  │
 └──────┬──────────────────┬──────────────────┬─────────────────┬────────────┘
        │                  │                  │                 │
@@ -81,11 +81,11 @@ src/loquor/
 ├── protocol/     identity.py envelope.py discovery.py card.py crypto.py node.py trust.py transport.py
 ├── transports/   multicast.py (localhost, wifi) · ble.py (bluetooth) · memory.py (tests)
 ├── extensions/   query.py · session.py · relay.py · trust.py
-├── reasoning/    base.py · ollama.py · template.py · trace.py (records every call)
+├── reasoning/    base.py · ollama.py · none.py (sensor nodes) · template.py · trace.py (records every call)
 ├── sensors/      base.py (Sensor, Reading, FunctionSensor) · builtin.py (simulated, command)
 ├── triggers/     base.py (Trigger, FunctionTrigger) · builtin.py (console, command)
 ├── agent/        agent.py · tracker.py · context.py · skill.py · sensors.py · triggers.py
-│                 skills/{llm_answer,goal,sensor_report}.py
+│                 skills/{llm_answer,goal,collect,sensor_report}.py
 ├── settings.py   device config: ~/.loquor/config.json (transport · model · beacon interval · logging)
 ├── config.py     profile JSON → objects ("type" lookup) · profile.schema.json
 ├── tools/        doctor.py · check.py · scaffold.py (init) · status.py · service.py
@@ -310,6 +310,20 @@ The agent stays unaware of them; they read what it exposes:
 - `doctor` checks the device; `scaffold` writes a starter agent;
   `service` writes a systemd or launchd unit.
 
+## Two roles: node and agent
+
+Nothing in the protocol distinguishes them; the profile does. An
+**agent** has a reasoner. A **node** has none (reasoner `none`, chosen
+automatically when no skill's `needs_reasoner` is true) and offers only
+data skills, in practice `sensor_report`. Both beacon, handshake and
+encrypt the same way; a node's capability card simply has no `llm`
+entry. The `collect` skill is the agent-side counterpart: it pulls
+`sensor_report` from every node each round — structured readings in an
+envelope addressed to the collector, no model on the node — and reasons
+over the table once. This keeps the LLM where decisions are made and
+lets the smallest boards join the mesh; a microcontroller firmware would
+implement beacon, HELLO and `sensor_report` and nothing else.
+
 ## What is deliberately not here
 
 - **No discovery service.** Beacons and HELLO over the transport *are*
@@ -335,3 +349,5 @@ The agent stays unaware of them; they read what it exposes:
    peer involved. All the parts exist; it is a 30-line skill.
 5. **A PyPI release**, so a device needs `pip install loquor-aac[ble]`
    and no clone.
+6. **A node firmware** for microcontrollers (ESP32: libsodium, CBOR,
+   BLE advertising): beacon, HELLO and `sensor_report` only.

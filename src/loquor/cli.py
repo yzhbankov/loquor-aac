@@ -56,10 +56,15 @@ async def run(args: argparse.Namespace) -> None:
         profile,
         base_dir=Path(args.profile).resolve().parent,
         settings=settings,
-        wrap_reasoner=(lambda r: TracingReasoner(r, trace_path(profile["name"]))) if trace else None,
+        wrap_reasoner=(lambda r: r if r.name == "none" else TracingReasoner(r, trace_path(profile["name"]))) if trace else None,
         **_overrides(args),
     )
     reasoner = getattr(agent.reasoner, "inner", agent.reasoner)
+    if isinstance(reasoner, OllamaReasoner) and not settings.llm:
+        sys.exit(
+            f"loquor: this device is configured as a sensor node (llm false), but {Path(args.profile).name} "
+            "needs an LLM. Run it on a device with Ollama, or `loquor config set llm true` and install Ollama here."
+        )
     if isinstance(reasoner, OllamaReasoner) and not await ollama_available(reasoner.base_url, model=reasoner.model):
         sys.exit(
             f"loquor: model {reasoner.model!r} is not available in Ollama at {reasoner.base_url}.\n"
@@ -138,7 +143,7 @@ def init(args: argparse.Namespace) -> int:
 
     directory = Path(args.directory)
     try:
-        written = scaffold(directory, args.name, force=args.force)
+        written = scaffold(directory, args.name, force=args.force, node=args.node)
     except FileExistsError as exc:
         print(f"loquor: {exc}")
         return 1
@@ -351,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init", help="write a starter agent (profile, prompt, a sensor, a trigger)")
     p.add_argument("directory", nargs="?", default="my_agent")
     p.add_argument("--name", help="the agent's name (default: from the directory)")
+    p.add_argument("--node", action="store_true", help="a sensor node: sensors and sensor_report only, no LLM")
     p.add_argument("--force", action="store_true", help="overwrite existing files")
 
     p = sub.add_parser("status", help="what the running agents see, read and decided")
@@ -365,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("config", help="this device's settings (~/.loquor/config.json)")
     p.add_argument("action", choices=("show", "set", "reset", "path"))
-    p.add_argument("pairs", nargs="*", metavar="KEY VALUE", help="for set: transport, interface, model, ollama_url, beacon_interval, wire, trace")
+    p.add_argument("pairs", nargs="*", metavar="KEY VALUE", help="for set: transport, interface, model, ollama_url, beacon_interval, wire, trace, llm")
 
     p = sub.add_parser("service", help="run an agent at boot with systemd (Linux) or launchd (macOS)")
     p.add_argument("action", choices=("install", "uninstall"))

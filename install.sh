@@ -4,12 +4,13 @@
 #   ./install.sh                       everything: Python, the package, Ollama, a model for this hardware
 #   ./install.sh --transport wifi      ...and set this device's transport
 #   ./install.sh --model qwen2.5:1.5b  ...with a specific model
+#   ./install.sh --node                a sensor node: no Ollama, no model (a Pi Zero is enough)
 #   ./install.sh --ble-le-mode         ...and put BlueZ in LE-only mode (Linux, needs sudo)
 #   ./install.sh --service agent.json  ...and start that agent at boot
 #
 # Safe to run again: every step checks before it acts. Run it from the repo root.
 #
-# Flags: --model NAME  --transport localhost|wifi|bluetooth  --no-ollama  --no-model
+# Flags: --model NAME  --transport localhost|wifi|bluetooth  --node (= --no-ollama)  --no-model
 #        --no-ble  --ble-le-mode  --service PROFILE  --yes (never ask)  --help
 
 set -euo pipefail
@@ -27,7 +28,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --model) MODEL="$2"; shift 2 ;;
     --transport) TRANSPORT="$2"; shift 2 ;;
-    --no-ollama) WANT_OLLAMA=0; WANT_MODEL=0; shift ;;
+    --no-ollama|--node) WANT_OLLAMA=0; WANT_MODEL=0; shift ;;
     --no-model) WANT_MODEL=0; shift ;;
     --no-ble) WANT_BLE=0; shift ;;
     --ble-le-mode) LE_MODE=1; shift ;;
@@ -196,6 +197,7 @@ say "Device config"
 ARGS=()
 [ -n "$MODEL" ] && ARGS+=(model "$MODEL")
 [ -n "$TRANSPORT" ] && ARGS+=(transport "$TRANSPORT")
+[ "$WANT_OLLAMA" -eq 0 ] && ARGS+=(llm false)
 if [ ${#ARGS[@]} -gt 0 ]; then
   "$LOQUOR" config set "${ARGS[@]}" | tail -1
 else
@@ -245,6 +247,7 @@ cat <<EOF
 
 Done. Next:
   source .venv/bin/activate
+  loquor init my_node --node         # a sensor node: measures and reports, no LLM
   loquor init my_agent               # a working agent to start from
   loquor check my_agent/agent.json   # build it, read its sensors, check the model
   loquor run   my_agent/agent.json   # on the air

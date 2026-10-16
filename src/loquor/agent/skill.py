@@ -37,6 +37,9 @@ class Skill:
     #: Sensors and triggers this skill uses, by name; checked at startup.
     sensors: tuple[str, ...] = ()
     triggers: tuple[str, ...] = ()
+    #: False for skills that never call the reasoner (``sensor_report``), so a
+    #: profile made only of those runs as a *node*: no LLM, no Ollama.
+    needs_reasoner: bool = True
 
     async def handle(self, input: dict[str, Any], ctx: Context) -> dict[str, Any]:
         """Answer one request. Raise to send the requester an error."""

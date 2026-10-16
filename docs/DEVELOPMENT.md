@@ -64,6 +64,7 @@ One file per protocol section plus the agent and config:
 | `test_tools.py` | tracing reasoner, status snapshot and file, doctor, check, init, service units |
 | `test_cli.py` | every `loquor` subcommand short of a real radio or model |
 | `test_demo_triage.py` | the triage demo end to end with a scripted clinician |
+| `test_nodes.py` | nodes without an LLM, the `collect` skill pulling readings and acting, the greenhouse profiles, `init --node`, `llm false` |
 | `test_architecture.py` | the dependency rule |
 
 Patterns worth copying:
@@ -113,7 +114,9 @@ class SoilReport(Skill):
             await ctx.wait_for_peers()               # returns on the next beacon/HELLO
 ```
 
-What `ctx` offers: `reasoner.complete(system, prompt, temperature=, schema=)`,
+A skill that never calls the reasoner sets `needs_reasoner = False`
+(`sensor_report` does); a profile made only of such skills runs as a
+node without an LLM. What `ctx` offers: `reasoner.complete(system, prompt, temperature=, schema=)`,
 `peers(capability=None)`, `ask(peer, capability, input, timeout=)`,
 `query(capability)` (QUERY/OFFER), `wait_for_peers()`, `log()`,
 `sensors` (a `SensorHub`: `readings()`, `latest()`, `read()`, `describe()`)
