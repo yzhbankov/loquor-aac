@@ -1,7 +1,8 @@
 """The nurse's trigger: the triage board on the laptop screen.
 
-Stand-in for a ward display or a pager. The contract is the same as any
-trigger: ``name``, ``description``, ``input_schema``, ``fire``.
+Stand-in for a ward display or a pager. Like every trigger: ``name``,
+``description`` (the LLM reads it), ``input_schema`` (what the LLM must
+provide; validated before ``fire`` runs) and ``fire()``.
 
     {"type": "triage_board.py:TriageBoard"}
 """
@@ -12,29 +13,28 @@ import textwrap
 
 from loquor.triggers import Trigger
 
-WIDTH = 72
-BADGE = {1: "🔴", 2: "🟠", 3: "🟡", 4: "🟢", 5: "🟢"}
+WIDTH = 70
 
 
 class TriageBoard(Trigger):
     name = "triage_board"
-    description = "Show the nurse the triage board: patients in the order to see them, with recommendations."
+    description = (
+        "Show the nurse the triage board: the patients in the order to see them, "
+        "each with the chair name and a one-line reason, plus short recommendations."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "patients": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                     "type": "object",
                     "properties": {
-                        "chair": {"type": "string"},
-                        "priority": {"type": "integer", "minimum": 1},
-                        "severity": {"type": "integer", "minimum": 1, "maximum": 5},
-                        "urgency": {"type": "string"},
-                        "concern": {"type": "string"},
-                        "reason": {"type": "string"},
+                        "chair": {"type": "string", "description": "the chair's name as announced"},
+                        "reason": {"type": "string", "description": "why this position: condition and urgency"},
                     },
-                    "required": ["chair", "priority"],
+                    "required": ["chair", "reason"],
                 },
             },
             "recommendations": {"type": "array", "items": {"type": "string"}},
@@ -47,16 +47,9 @@ class TriageBoard(Trigger):
 
     async def fire(self, input):
         lines = ["🏥  TRIAGE BOARD — see patients in this order", ""]
-        for p in input["patients"]:
-            badge = BADGE.get(p.get("severity", 3), "⚪")
-            head = f"{p['priority']}. {badge} {p['chair']}"
-            if "severity" in p:
-                head += f"   severity {p['severity']}, {p.get('urgency', '')}"
-            lines.append(head)
-            if p.get("concern"):
-                lines += textwrap.wrap(f"      {p['concern']}", WIDTH - 4, subsequent_indent="      ")
-            if p.get("reason"):
-                lines += textwrap.wrap(f"      ↳ {p['reason']}", WIDTH - 4, subsequent_indent="        ")
+        for i, p in enumerate(input["patients"], 1):
+            lines.append(f"{i}. {p['chair']}")
+            lines += textwrap.wrap(f"      {p['reason']}", WIDTH - 4, subsequent_indent="      ")
             lines.append("")
         if input.get("recommendations"):
             lines.append("Recommendations")

@@ -1,49 +1,38 @@
 # Demo: Emergency Triage
 
-An emergency department waiting area with **automated triage chairs**. A
-patient sits down; the chair measures temperature, heart rate, blood
-pressure and oxygen, asks "how do you feel?", and its LLM assesses how
-serious the case is. A **nurse** arrives with a laptop (or a tablet, or a
-badge — any device); her agent asks every chair for its patient's status,
-and her LLM decides whom to see first and what to do.
+A waiting area with **automated triage chairs**. A patient sits down; the
+chair measures temperature, heart rate, blood pressure and oxygen, asks
+"how do you feel?", and its LLM assesses how serious the case is. A
+**nurse** arrives with a laptop; her agent asks every chair for its
+patient's status, her LLM decides whom to see first, and the triage board
+appears on her screen.
 
-Four agents, four processes: three chairs and the nurse. Nothing is
-central: the chairs never talk to each other, the nurse's device finds them
-by their beacons.
+Everything specific to this demo is one sensor, one trigger and the
+profiles. The skills are the built-in ones.
+
+| file | what it is |
+|---|---|
+| `patient_simulator.py` | **sensor** — the chair's monitor: vitals plus what the patient said; a `scenario` per chair (stand-in for a real cuff and oximeter) |
+| `triage_board.py` | **trigger** — the board on the nurse's screen (stand-in for a ward display or pager) |
+| `chair_1.json`, `chair_2.json`, `chair_3.json` | a chair: the sensor + `llm_answer` grounded in it, answering `patient_status` |
+| `nurse_agent.json` | the nurse: `goal` that gathers answers from 3 chairs + the board trigger |
 
 ```mermaid
 sequenceDiagram
     participant S as patient monitor (sensor)
-    participant C1 as Triage Chair 1
-    participant C2 as Triage Chair 2…3
+    participant C as Triage Chair 1…3
     participant N as Triage Nurse
     participant B as triage board (trigger)
-    C1-->>N: beacon · HELLO/HELLO_ACK (keys exchanged, encrypted from here)
-    C2-->>N: beacon · HELLO/HELLO_ACK
-    Note over N: hears 3 chairs (or settles after 12 s) → start the round
-    N->>C1: MSG request patient_status {}
-    S-->>C1: vitals + "Crushing pain in my chest…"
-    Note over C1: LLM: severity 1, immediate, suspected cardiac event
-    C1->>C1: fire alarm (severity ≤ 2) — 🚨 on the chair
-    C1->>N: MSG response {chair, vitals, complaint, severity, urgency, concern}
-    N->>C2: same, for each chair
-    C2->>N: statuses
-    Note over N: LLM orders the patients, writes recommendations
-    N->>B: fire triage_board {patients in order, recommendations}
+    C-->>N: beacons · HELLO/HELLO_ACK (keys exchanged, encrypted from here)
+    Note over N: LLM: "can this chair help my goal?" → yes, ask patient_status
+    N->>C: MSG request patient_status {question}
+    S-->>C: vitals + "Crushing pain in my chest…"
+    Note over C: LLM assesses from the reading: severity, urgency, concern
+    C->>N: MSG response {answer}
+    Note over N: 3 answers in (or 15 s after the last) → LLM concludes the order
+    Note over N: LLM proposes triage_board {patients, recommendations}; schema validated
+    N->>B: fire → the board is printed
 ```
-
-What each file is:
-
-| file | role | contract it implements |
-|---|---|---|
-| `patient_simulator.py` | the chair's sensor: vitals + the patient's answer; a `scenario` per chair | `Sensor.read()` |
-| `triage_assessment.py` | the chair's skill: sensor → LLM → structured status; fires `alarm` directly for severity ≤ 2 | `Skill.handle()`, capability `patient_status` |
-| `triage_round.py` | the nurse's skill: ask every chair, LLM orders, fire the board | `Skill.run()` |
-| `triage_board.py` | the nurse's trigger: the board on screen | `Trigger.fire()` + input schema |
-| `chair_1..3.json`, `nurse_agent.json` | the profiles wiring them together | — |
-
-Replace `patient_simulator.py` with a driver for a real cuff and oximeter
-and nothing else changes.
 
 ## 1. Setup (once per device)
 
@@ -58,8 +47,8 @@ ollama pull qwen2.5:3b
 
 ## 2. Run on one computer
 
-Four terminals in the repo root with the venv active. Start the chairs
-first (any order), then the nurse:
+Four terminals in the repo root with the venv active. Chairs first (any
+order), then the nurse:
 
 ```bash
 python run_agent.py demo/triage/chair_1.json --wire off    # chest pain
@@ -68,75 +57,76 @@ python run_agent.py demo/triage/chair_3.json --wire off    # breathing difficult
 python run_agent.py demo/triage/nurse_agent.json --wire off
 ```
 
-Two chairs are enough: set `"expected_chairs": 2` in `nurse_agent.json`, or
-leave it and the nurse starts 12 s after hearing the first chair.
+Two chairs are enough: the nurse concludes 15 s after the last answer if
+fewer than three turn up (`"settle"` in `nurse_agent.json`).
 
 ### What you will see
 
-The nurse's terminal, about a minute end to end with a 3B model (each chair
-runs one LLM assessment, then the nurse runs one ranking):
+The nurse's terminal, under a minute with a 3B model:
 
 ```
-triage-nurse-9c1e… | id … | model qwen2.5:3b (ollama) | transport profile (127.0.0.1) | visible | Ctrl-C to stop
-triage-nurse-9c1e… met triage-chair-1-…: I am an automated emergency triage chair… ['patient_status', 'sensor_report']
-triage-nurse-9c1e… met triage-chair-2-…
-triage-nurse-9c1e… met triage-chair-3-…
-triage-nurse-9c1e…: asking 3 chair(s) for their patients' status
-BODY  request  -> triage-chair-1-… {"capability": "patient_status", "input": {}}
-BODY  response <- triage-chair-1-… {"output": {"chair": "Triage Chair 1", "vitals": {"temperature_c": 37.1, "heart_rate_bpm": 118, "blood_pressure": "162/94", "spo2_percent": 94}, "complaint": "Crushing pain…", "severity": 1, "urgency": "immediate", "concern": "Possible acute coronary syndrome", …}}
-…
-TRIGGER triage_board {"patients": [{"chair": "Triage Chair 1", "priority": 1, "severity": 1, …
+triage-nurse-…: reasoning about triage-chair-1-…: useful=True — it has a patient's vitals and complaint
+triage-nurse-…: reasoning about triage-chair-3-…: useful=True — …
+triage-nurse-…: reasoning about triage-chair-2-…: useful=True — …
 
-╭──────────────────────────────────────────────────────────────────────╮
-│ 🏥  TRIAGE BOARD — see patients in this order                        │
-│                                                                      │
-│ 1. 🔴 Triage Chair 1   severity 1, immediate                         │
-│       Possible acute coronary syndrome                               │
-│       ↳ Chest pain radiating to the arm with tachycardia…            │
-│ 2. 🟠 Triage Chair 3   severity 2, within 15 minutes                 │
-│       Respiratory distress with low oxygen saturation                │
-│ 3. 🟡 Triage Chair 2   severity 3, within 1 hour                     │
-│       Influenza-like illness                                         │
-│                                                                      │
-│ Recommendations                                                      │
-│   • Chair 1: ECG now, prepare for cardiac pathway.                   │
-│   • Chair 3: supplemental oxygen, reassess SpO2 in 5 minutes.        │
-╰──────────────────────────────────────────────────────────────────────╯
+=== Goal complete ===
+goal      : Find out the status of every patient in the triage chairs and decide the order…
+asked     : Triage Chair 1, Triage Chair 3, Triage Chair 2
+outcome   : See Chair 1 first (possible cardiac event, severity 1), then Chair 3 (respiratory distress, SpO2 88 %), then Chair 2 (influenza-like illness, stable)…
+
+triage-nurse-…: firing triage_board — the order is decided and must reach the nurse
+
+╭────────────────────────────────────────────────────────────────────╮
+│ 🏥  TRIAGE BOARD — see patients in this order                      │
+│                                                                    │
+│ 1. Triage Chair 1                                                  │
+│       Chest pain radiating to the arm, tachycardia, hypertension:  │
+│       possible acute coronary syndrome — immediate                 │
+│                                                                    │
+│ 2. Triage Chair 3                                                  │
+│       Wheezing, SpO2 88 %, heart rate 119: respiratory distress —  │
+│       within 15 minutes                                            │
+│                                                                    │
+│ 3. Triage Chair 2                                                  │
+│       Fever 38.5 °C, stable vitals: influenza-like illness — within │
+│       an hour                                                      │
+│                                                                    │
+│ Recommendations                                                    │
+│   • ECG and cardiac pathway for Chair 1 now.                       │
+│   • Supplemental oxygen for Chair 3, reassess SpO2 in 5 minutes.   │
+╰────────────────────────────────────────────────────────────────────╯
 ```
 
-Each chair's terminal shows its own assessment, and chairs 1 and 3 print
-`🚨  ALARM  Triage Chair 1: severity 1 — …` the moment they assess a severe
-case: the chair decided that itself, without waiting for the nurse.
+Each chair's terminal shows the question arriving and its own assessment
+leaving — grounded in its sensor reading, which `-v` prints every time it
+is read.
 
 Where the decisions are made:
 
-| decision | who | how |
+| decision | by | how |
 |---|---|---|
-| how serious is this patient | the chair's LLM | JSON with `severity`, `urgency`, `concern`, clamped by code |
-| raise the chair's alarm | the chair's code | `severity ≤ 2` → `ctx.triggers.fire("alarm", …)` — no LLM in the loop |
-| whom to see first, what to do | the nurse's LLM | JSON order + recommendations; anyone the model forgets is appended by severity |
-| show the board | the nurse's code | `ctx.triggers.fire("triage_board", …)`, validated against the trigger's schema |
+| how serious is this patient | the chair's LLM | `llm_answer` with the sensor reading at `{sensors}` in its prompt |
+| which peers to ask | the nurse's LLM | `goal` decides per chair it hears (useful / capability / question) |
+| whom to see first | the nurse's LLM | `goal` concludes over all three answers |
+| show the board | the nurse's LLM proposes, code decides | the proposal must match `triage_board`'s input schema or nothing is shown |
 
 Things to try:
-- Restart a chair with a different `"scenario"` (`sprain`, `headache`) and
-  restart the nurse: the order changes.
-- Ask a chair for raw numbers: `sensor_report` is on every chair, so any
-  agent can `ctx.ask(chair, "sensor_report", {})` and get the vitals as data.
-- `--visibility quiet` on the nurse: she never beacons, but still finds the
-  chairs and asks them.
+- Change a chair's `"scenario"` (`sprain`, `headache`, `random`) and restart the nurse.
+- Ask a chair for numbers, not prose: `sensor_report` is on every chair.
+- Replace `patient_simulator.py` with a driver for a real cuff: same contract, nothing else changes.
 
 ## 3. Run on several devices
 
-Chairs and the nurse's device on the same Wi-Fi or hotspot; each set up as
-in step 1; add `--transport wifi` to every command. A chair can be a
-Raspberry Pi with a cuff on its UART; the nurse's device can be anything
-with Python and a local model.
+Chairs and the nurse's device on one Wi-Fi or hotspot, each set up as in
+step 1, `--transport wifi` on every command. A chair can be a Raspberry Pi
+with a cuff on its UART; the nurse's device anything with Python and a local
+model.
 
 ## 4. Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| nurse says `no patient statuses` | the chairs took longer than `ask_timeout` (90 s) — a slow model; try `--model qwen2.5:1.5b` on the chairs |
-| nurse never starts the round | it needs to hear at least one chair; check both sides use the same `--transport` |
+| nurse concludes with fewer chairs than expected | they took longer than 15 s to answer — raise `"settle"`, or use a smaller model on the chairs (`--model qwen2.5:1.5b`) |
+| nurse never starts | it needs to hear at least one chair; same `--transport` on all |
+| `no trigger fired: invalid input…` | the model's board did not match the schema; it is logged, nothing wrong is shown — rerun or use a larger model |
 | `model ... is not available in Ollama` | `ollama pull qwen2.5:3b` |
-| board order looks wrong | the model ranked it; the chairs' severities are shown next to each patient so you can judge |

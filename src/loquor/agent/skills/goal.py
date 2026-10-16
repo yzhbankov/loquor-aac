@@ -2,10 +2,13 @@
 
 For each peer, the reasoner decides once whether it can help with the goal
 and what to ask it (JSON: ``useful``, ``reason``, ``capability``,
-``question``). If useful, the skill asks, then reasons over the answer to
-complete the goal. With ``triggers`` set, it then asks the reasoner which
-of those triggers to fire with the conclusion — validated by the trigger
-hub — and fires it. The goal completes once; the agent keeps answering.
+``question``). If useful, the skill asks and keeps the answer. The goal
+concludes when ``min_answers`` answers are in, or ``settle`` seconds after
+the last answer if fewer peers turn up — the default (1, 0) concludes on the
+first answer. The reasoner then completes the goal over all answers. With
+``triggers`` set, it proposes one of those triggers with the conclusion —
+validated by the trigger hub — and fires it. The goal completes once; the
+agent keeps answering.
 
 A peer whose decision cannot be parsed, or that never answers, is
 reconsidered on its next beacon.
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from loquor.agent.context import Context
@@ -39,13 +43,17 @@ class Goal(Skill):
     capability = ""  # pursues; answers nothing
 
     def __init__(self, goal: str, system_prompt: str, temperature: float = 0.2,
-                 triggers: list[str] | None = None):
+                 triggers: list[str] | None = None, min_answers: int = 1, settle: float = 0.0):
         self.goal = goal
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.triggers = tuple(triggers or ())
+        self.min_answers = max(1, min_answers)
+        self.settle = settle
+        self.answers: list[dict[str, Any]] = []
         self.result: dict[str, Any] | None = None
         self.done = asyncio.Event()
+        self._last_answer_at = 0.0
 
     async def run(self, ctx: Context) -> None:
         considered: set[str] = set()
@@ -56,12 +64,23 @@ class Goal(Skill):
                 considered.add(peer.uid)
                 if not await self._pursue(peer, ctx):
                     considered.discard(peer.uid)  # try again on its next beacon
-                if self.done.is_set():
+                if len(self.answers) >= self.min_answers:
+                    await self._conclude(ctx)
                     return
-            await ctx.wait_for_peers()
+            if self.answers and self.settle:
+                remaining = self.settle - (time.monotonic() - self._last_answer_at)
+                if remaining <= 0:
+                    await self._conclude(ctx)
+                    return
+                try:
+                    await asyncio.wait_for(ctx.wait_for_peers(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await ctx.wait_for_peers()
 
     async def _pursue(self, peer: Peer, ctx: Context) -> bool:
-        """True if this peer is settled (helped, or can't); False to retry later."""
+        """Ask this peer if it can help. True if settled (asked, or useless); False to retry."""
         decision = await self._decide(peer, ctx)
         if decision is None:
             return False
@@ -79,43 +98,48 @@ class Goal(Skill):
         except RequestError as exc:
             ctx.log("%s could not help: %s", peer.label, exc)
             return True
-        answer = str(output.get("answer", output))
-
-        outcome = await ctx.reasoner.complete(
-            system=self.system_prompt,
-            prompt=(
-                f"Your goal: {self.goal}\n"
-                f"You asked {peer.name} ({peer.description}): {question}\n"
-                f"It answered: {answer}\n\n"
-                "Now complete your goal based on this answer."
-            ),
-            temperature=self.temperature,
-        )
-        self.result = {
-            "goal": self.goal,
-            "asked": {"uid": peer.uid, "name": peer.name, "capability": capability, "question": question},
-            "answer": answer,
-            "outcome": outcome.strip(),
-            "reasoning": decision["reason"],
-        }
-        ctx.log(
-            "\n=== Goal complete ===\ngoal      : %s\nasked     : %s (%s)\nwhy       : %s\n"
-            "question  : %s\nanswer    : %s\noutcome   : %s\n",
-            self.goal, peer.name, peer.label, decision["reason"], question, answer, self.result["outcome"],
-        )
-        if self.triggers:
-            self.result["triggered"] = await self._act(ctx)
-        self.done.set()
+        self.answers.append({
+            "uid": peer.uid, "name": peer.name, "description": peer.description,
+            "capability": capability, "question": question, "reason": decision["reason"],
+            "answer": str(output.get("answer", output)),
+        })
+        self._last_answer_at = time.monotonic()
         return True
 
-    async def _act(self, ctx: Context) -> dict[str, Any] | None:
+    async def _conclude(self, ctx: Context) -> None:
+        gathered = "\n".join(
+            f"- You asked {a['name']} ({a['description']}): {a['question']}\n  It answered: {a['answer']}"
+            for a in self.answers
+        )
+        outcome = await ctx.reasoner.complete(
+            system=self.system_prompt,
+            prompt=f"Your goal: {self.goal}\n\nWhat you gathered:\n{gathered}\n\nNow complete your goal based on this.",
+            temperature=self.temperature,
+        )
+        first = self.answers[0]
+        self.result = {
+            "goal": self.goal,
+            "asked": {k: first[k] for k in ("uid", "name", "capability", "question")},
+            "answer": first["answer"],
+            "answers": list(self.answers),
+            "outcome": outcome.strip(),
+            "reasoning": first["reason"],
+        }
+        ctx.log(
+            "\n=== Goal complete ===\ngoal      : %s\nasked     : %s\noutcome   : %s\n",
+            self.goal, ", ".join(a["name"] for a in self.answers), self.result["outcome"],
+        )
+        if self.triggers:
+            self.result["triggered"] = await self._act(ctx, gathered)
+        self.done.set()
+
+    async def _act(self, ctx: Context, gathered: str) -> dict[str, Any] | None:
         """Let the reasoner pick a trigger for the conclusion; fire it if valid."""
         assert self.result is not None
         proposal = await ctx.triggers.propose(
             system=self.system_prompt,
             situation=(
-                f"Your goal: {self.goal}\n"
-                f"The information you gathered: {self.result['answer']}\n"
+                f"Your goal: {self.goal}\n\nWhat you gathered:\n{gathered}\n\n"
                 f"Your conclusion: {self.result['outcome']}\n\n"
                 "Act on this conclusion with one of the available triggers, filling its input "
                 "from your conclusion, or choose null if none fits."
