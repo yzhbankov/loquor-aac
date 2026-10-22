@@ -11,11 +11,17 @@ file next to the profile or as an installed module, and list it under
 """
 
 from loquor.sensors.base import FunctionSensor, Reading, Sensor, describe_readings
-from loquor.sensors.builtin import Command, Simulated
+from loquor.sensors.builtin import Command, File, Http, Simulated
+from loquor.sensors.hardware import Gpio, Serial
 
 BUILTIN_SENSORS = {
     "simulated": Simulated,
     "command": Command,
+    "file": File,
+    "http": Http,
+    "gpio": Gpio,
+    "serial": Serial,
 }
 
-__all__ = ["BUILTIN_SENSORS", "Command", "FunctionSensor", "Reading", "Sensor", "Simulated", "describe_readings"]
+__all__ = ["BUILTIN_SENSORS", "Command", "File", "FunctionSensor", "Gpio", "Http", "Reading", "Sensor", "Serial",
+           "Simulated", "describe_readings"]

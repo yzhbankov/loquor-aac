@@ -78,10 +78,12 @@ def snapshot(agent: Agent, *, extra: dict[str, Any] | None = None) -> dict[str, 
                 "goal": s.goal,
                 "done": s.done.is_set(),
                 "answers": len(s.answers),
+                "rounds": getattr(s, "rounds", None),
+                "every": getattr(s, "every", None),
                 "outcome": (s.result or {}).get("outcome"),
                 "triggered": (s.result or {}).get("triggered"),
             }
-            for s in agent.skills if hasattr(s, "goal") and hasattr(s, "done")
+            for s in agent.skills if getattr(s, "goal", None) and hasattr(s, "done")
         ],
         "collected": [
             {"rounds": s.rounds, "goal": s.goal or None, "assessment": s.assessment,
@@ -223,10 +225,17 @@ def format_status(data: dict[str, Any]) -> str:
         tail = f"failed: {c['error']}" if c.get("error") else f"-> {c.get('response')}"
         lines.append(f"    #{c.get('n')} {c.get('seconds')} s  {c.get('prompt')}  {tail}")
     for g in data.get("goals") or []:
-        state = "complete" if g.get("done") else f"in progress ({g.get('answers')} answers)"
+        if g.get("done"):
+            state = "complete"
+        elif g.get("every"):
+            state = f"every {g['every']:g} s, {g.get('rounds') or 0} round(s), {g.get('answers')} answer(s)"
+        else:
+            state = f"in progress ({g.get('answers')} answers)"
         lines.append(f"  goal       : {g.get('goal')}  [{state}]")
         if g.get("outcome"):
             lines.append(f"    outcome  : {_snip(g['outcome'], 300)}")
+        if g.get("triggered"):
+            lines.append(f"    fired    : {json.dumps(g['triggered'], ensure_ascii=False, default=str)[:200]}")
     for c in data.get("collected") or []:
         lines.append(f"  collected  : {len(c.get('nodes') or [])} node(s), {c.get('rounds')} round(s)"
                      + (f", goal: {_snip(c['goal'], 80)}" if c.get("goal") else ""))

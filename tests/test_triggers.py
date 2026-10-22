@@ -94,7 +94,7 @@ async def test_hub_propose_accepts_only_valid_proposals():
 
     p, r = await propose({"trigger": "relay", "input": {"on": True}, "reason": "fill it"}, ["relay"])
     assert p == Proposal("relay", {"on": True}, "fill it") and bool(p)
-    assert r.schemas[0]["properties"]["trigger"]["enum"] == ["relay", None]
+    assert r.schemas[0]["properties"]["trigger"]["enum"] == ["relay", "none", None]
     assert r.schemas[0]["properties"]["input"] == Relay.input_schema  # single trigger: exact schema
 
     p, r = await propose({"trigger": None, "input": {}, "reason": "nothing to do"})

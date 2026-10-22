@@ -5,7 +5,7 @@ microphone/keypad the patient answers on. One reading is one dict so the
 LLM sees the whole picture at once. A ``scenario`` keeps a chair's patient
 consistent between readings (vitals drift a little; the complaint stays).
 
-    {"type": "patient_simulator.py:PatientMonitor", "name": "patient", "scenario": "chest_pain"}
+    {"type": "patient_simulator.py:PatientMonitor", "scenario": "chest_pain"}
 """
 
 from __future__ import annotations
@@ -60,14 +60,14 @@ SCENARIOS = {
 
 
 class PatientMonitor(Sensor):
+    name = "patient"
     description = (
         "The chair's vitals monitor (temperature, heart rate, blood pressure, SpO2) "
         "plus the seated patient's own answer to 'how do you feel?'"
     )
 
-    def __init__(self, name: str = "patient", scenario: str = "random", interval: float | None = None):
-        self.name = name
-        self.interval = interval
+    def __init__(self, scenario: str = "random", **fields):
+        super().__init__(**fields)  # name, interval… from the profile
         if scenario == "random":
             scenario = random.choice(list(SCENARIOS))
         if scenario not in SCENARIOS:

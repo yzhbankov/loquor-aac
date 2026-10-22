@@ -37,7 +37,7 @@ class OfferTriggers(Skill):
         self.min_trust = min_trust
 
     def offered(self, hub) -> list[str]:
-        return [n for n in (self.triggers or hub.names()) if n in hub]
+        return [n for n in (self.triggers or hub.local_names()) if n in hub]
 
     def advertise(self, agent: Any) -> dict[str, Any]:
         hub = agent.triggers

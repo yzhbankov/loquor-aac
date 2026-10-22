@@ -42,9 +42,6 @@ class TriageBoard(Trigger):
         "required": ["patients"],
     }
 
-    def __init__(self, name: str = "triage_board"):
-        self.name = name
-
     async def fire(self, input):
         lines = ["🏥  TRIAGE BOARD — see patients in this order", ""]
         for i, p in enumerate(input["patients"], 1):

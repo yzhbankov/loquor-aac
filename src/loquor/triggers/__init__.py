@@ -13,11 +13,17 @@ This package imports nothing else in loquor.
 """
 
 from loquor.triggers.base import FunctionTrigger, Trigger, TriggerError
-from loquor.triggers.builtin import Command, Console
+from loquor.triggers.builtin import Command, Console, File, Http
+from loquor.triggers.hardware import Gpio, Serial
 
 BUILTIN_TRIGGERS = {
     "console": Console,
     "command": Command,
+    "file": File,
+    "http": Http,
+    "gpio": Gpio,
+    "serial": Serial,
 }
 
-__all__ = ["BUILTIN_TRIGGERS", "Command", "Console", "FunctionTrigger", "Trigger", "TriggerError"]
+__all__ = ["BUILTIN_TRIGGERS", "Command", "Console", "File", "FunctionTrigger", "Gpio", "Http", "Serial", "Trigger",
+           "TriggerError"]

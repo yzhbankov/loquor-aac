@@ -1,11 +1,12 @@
 """The demo's sensor: invents plausible weather.
 
-This is the whole contract a sensor needs: subclass ``Sensor``, implement
-``read()``, return ``self.reading(value)``. A real one would open a serial
-port or an I²C bus in ``__init__`` and read the instrument here — the agent
-cannot tell the difference. Listed in the profile as::
+This is the whole contract a sensor needs: subclass ``Sensor``, set its
+``name`` and ``description``, implement ``read()``, return
+``self.reading(value)``. A real one would open a serial port or an I²C bus
+and read the instrument here — the agent cannot tell the difference.
+Listed in the profile as::
 
-    {"type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5}
+    {"type": "weather_sensor.py:RandomWeather", "interval": 5}
 """
 
 from __future__ import annotations
@@ -23,11 +24,8 @@ CONDITIONS = [  # (max temperature, possible conditions)
 
 
 class RandomWeather(Sensor):
+    name = "weather"
     description = "Current outdoor weather at this device: temperature, condition, wind."
-
-    def __init__(self, name: str = "weather", interval: float | None = None):
-        self.name = name
-        self.interval = interval
 
     async def read(self):
         temperature = random.randint(-10, 35)

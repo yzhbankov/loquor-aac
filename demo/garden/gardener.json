@@ -1,0 +1,6 @@
+{
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
+  "name": "Gardener",
+  "description": "I look after the vegetable garden. Ask me whether the beds need water or how the soil is.",
+  "brain": { "prompt_file": "gardener_prompt.txt" }
+}

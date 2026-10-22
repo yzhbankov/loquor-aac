@@ -32,19 +32,22 @@ jobs:
         run: ./install.sh --no-ollama --yes
       - name: doctor
         run: .venv/bin/loquor doctor --no-llm
-      - name: check the demo profiles
+      - name: check every demo profile
         run: |
-          .venv/bin/loquor check demo/weather_and_clothes/weather_agent.json --no-llm
-          .venv/bin/loquor check demo/triage/nurse_agent.json --no-llm
-          .venv/bin/loquor check demo/greenhouse/controller.json --no-llm
+          for profile in demo/*/*.json; do .venv/bin/loquor check "$profile" --no-llm --transport localhost; done
+      - name: read and fire by hand
+        run: |
+          .venv/bin/loquor read demo/greenhouse/node_tank.json
+          .venv/bin/loquor fire demo/greenhouse/node_tank.json valve '{"seconds": 10}'
       - name: a sensor node runs with no LLM at all
         run: |
           .venv/bin/loquor config set llm false
           .venv/bin/loquor doctor --transport localhost
           .venv/bin/loquor check demo/greenhouse/node_soil.json
-          .venv/bin/loquor run demo/greenhouse/node_soil.json --transport localhost & pid=$!
-          sleep 8
+          .venv/bin/loquor run demo/greenhouse/node_soil.json --transport localhost --beacon-interval 1 & pid=$!
+          sleep 4
           .venv/bin/loquor status "Soil Node"
+          .venv/bin/loquor ask "Soil Node" --transport localhost --timeout 20   # its readings, over the protocol
           kill -INT $pid; wait $pid
           .venv/bin/loquor config set llm true
       - name: init, check and run a starter agent for 10 s

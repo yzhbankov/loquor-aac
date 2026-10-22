@@ -3,14 +3,12 @@
 Writes a folder with a profile, a prompt, one sensor file with a function
 and a class, and one trigger — all runnable as they are, each marked where
 your own hardware goes. ``loquor check`` then ``loquor run`` and it is on
-the air.
+the air. ``--node`` writes the same without a brain (and without a prompt).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-from loquor.protocol.discovery import slug
 
 SCHEMA_URL = "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json"
 
@@ -18,18 +16,16 @@ PROFILE = """{{
   "$schema": "{schema}",
   "name": "{name}",
   "description": "I am {name}. I report the load and temperature at my device and can show a message to the person next to it.",
-  "system_prompt_file": "prompt.txt",
   "sensors": [
     {{ "type": "sensors.py:load_average", "name": "load", "interval": 10 }},
-    {{ "type": "sensors.py:Thermometer", "name": "temperature", "interval": 10 }}
+    {{ "type": "sensors.py:Thermometer", "interval": 10 }}
   ],
   "triggers": [
     {{ "type": "triggers.py:Notify" }}
   ],
-  "skills": [
-    {{ "type": "llm_answer", "capability": "{capability}", "sensors": ["load", "temperature"] }},
-    {{ "type": "sensor_report" }}
-  ]
+  "brain": {{
+    "prompt_file": "prompt.txt"
+  }}
 }}
 """
 
@@ -50,10 +46,13 @@ Two shapes, pick whichever is simpler for you:
 - a **function** that returns the value (a number, a string, or a flat dict);
 - a **class** that subclasses ``Sensor`` and returns ``self.reading(value)`` from ``read()``.
 
-Each one is listed in ``agent.json`` under ``"sensors"`` with a ``name`` and an
-``interval`` (seconds between readings; leave it out to read only on demand).
-The LLM reads the description (the docstring, or ``description``) to know
-what the number means.
+Each one is listed in ``agent.json`` under ``"sensors"``; ``name`` and
+``interval`` (seconds between readings; leave it out to read only on demand)
+there override the class's own. The LLM reads the description (the
+docstring, or ``description``) to know what the number means.
+
+Many devices need no Python: ``command``, ``file``, ``http``, ``gpio`` and
+``serial`` sensors are built in (docs/HARDWARE.md).
 """
 
 from __future__ import annotations
@@ -70,18 +69,16 @@ def load_average():
 
 
 class Thermometer(Sensor):
+    name = "temperature"
     description = "Temperature at the device."
     unit = "°C"
-
-    def __init__(self, name: str = "temperature", interval: float | None = None):
-        self.name = name
-        self.interval = interval
-        # Open your instrument here: a serial port, an I²C bus, a GPIO pin…
 
     async def read(self):
         # Replace the next line with a reading from your instrument. For a
         # Raspberry Pi's CPU sensor, for example:
         #     return self.reading(int(open("/sys/class/thermal/thermal_zone0/temp").read()) / 1000)
+        # or skip Python in agent.json:
+        #     {{ "type": "file", "name": "temperature", "path": "/sys/class/thermal/thermal_zone0/temp", "scale": 0.001 }}
         # Blocking calls go through ``await asyncio.to_thread(...)``. On any
         # failure return ``self.failed("why")`` instead of raising: a broken
         # sensor is "no data", not a crash.
@@ -95,6 +92,8 @@ it *proposes* a trigger and an input, the agent validates the input against
 ``input_schema`` and only then calls ``fire()``. So ``fire()`` can trust
 what it receives, and ``description`` must tell the LLM what the action is
 for and when to use it.
+
+Try it by hand: ``loquor fire agent.json notify '{{"message": "hello"}}'``.
 """
 
 from __future__ import annotations
@@ -123,72 +122,80 @@ class Notify(Trigger):
 
 README = """# {name}
 
-An agent made by `loquor init`. Everything in this folder is yours to change.
+An **agent** made by `loquor init`: a device with sensors, a trigger and a
+**brain** (an LLM). Everything in this folder is yours to change.
 
 | file | what it is |
 |---|---|
-| `agent.json` | the profile: who the agent is and which parts it has |
+| `agent.json` | the profile: name, description, sensors, triggers, brain |
 | `prompt.txt` | how its LLM behaves (`{{sensors}}` is replaced by the current readings) |
 | `sensors.py` | what it measures: a function and a class, both runnable as they are |
 | `triggers.py` | what it can do: one action with a schema the LLM is held to |
 
 ```bash
 loquor check {dir}/agent.json     # loads everything, reads each sensor once, checks the model
+loquor read  {dir}/agent.json     # just the sensors, again
+loquor fire  {dir}/agent.json notify '{{"message": "hello"}}'   # a trigger, by hand
 loquor run   {dir}/agent.json     # on the air; Ctrl-C to stop
 loquor status "{name}"            # from another terminal: peers, readings, LLM calls
 ```
 
-Next steps, in the order people usually take them:
+As it is, the agent **answers** other agents' questions from its sensors
+and shares its readings with them as data. Next steps:
 
 1. **Read your own instrument** in `sensors.py` (`Thermometer.read`) and
-   **drive your own hardware** in `triggers.py` (`Notify.fire`).
+   **drive your own hardware** in `triggers.py` (`Notify.fire`) — or use a
+   built-in driver with no Python (`command`, `file`, `http`, `gpio`,
+   `serial`; docs/HARDWARE.md).
 2. **Change the persona** in `prompt.txt` and the `description` in `agent.json`:
    other agents' LLMs read the description to decide whether to ask you.
-3. **Give it a goal** that uses other agents and your trigger — add to `"skills"`:
+3. **Give the brain a goal**, and it reads what it needs — its own sensors
+   and those of nodes in range —, asks agents that can help, and acts:
 
    ```json
-   {{ "type": "goal",
-     "goal": "Find out whether any device nearby is overheating and warn the person here if so.",
-     "triggers": ["notify"] }}
+   "brain": {{
+     "prompt_file": "prompt.txt",
+     "goal": "Warn the person here if this device or any device nearby is overheating.",
+     "every": 60,
+     "act": ["notify"]
+   }}
    ```
 
-4. **Run it on another device** too: the same folder, `loquor run`, and the
-   two find each other over the transport in `loquor config show`.
+4. **Add a node** for a device without an LLM: `loquor init my_node --node`
+   on it. Its sensors appear here as `<node-name>:<sensor>` and its triggers
+   as `<node-name>:<trigger>`, for the brain to read and fire.
 
-Reference: `docs/USAGE.md` (profile fields, commands) and `docs/DEVELOPMENT.md`
-(sensor, trigger and skill contracts).
+Reference: docs/CONCEPTS.md (how it fits together), docs/USAGE.md (every field).
 """
 
 
 NODE_PROFILE = """{{
   "$schema": "{schema}",
   "name": "{name}",
-  "description": "I am {name}, a sensor node. I measure the load and temperature at my device, report the numbers to any agent that asks, and can switch my relay when told to.",
+  "description": "I am {name}, a sensor node. I measure the load and temperature at my device and can switch my relay.",
   "sensors": [
     {{ "type": "sensors.py:load_average", "name": "load", "interval": 10 }},
-    {{ "type": "sensors.py:Thermometer", "name": "temperature", "interval": 10 }}
+    {{ "type": "sensors.py:Thermometer", "interval": 10 }}
   ],
   "triggers": [
     {{ "type": "triggers.py:Relay" }}
-  ],
-  "skills": [
-    {{ "type": "sensor_report" }},
-    {{ "type": "offer_triggers", "min_trust": 0 }}
   ]
 }}
 """
 
 NODE_TRIGGERS = '''"""Triggers for {name}: what this node can do when an agent tells it to.
 
-A node has no LLM. It *offers* its triggers in its capability card (the
-``offer_triggers`` skill in ``agent.json``); an agent in range shows them
-to its own LLM next to its own triggers, and when it decides to use one it
-sends ``fire_trigger`` here. The input is validated against
-``input_schema`` on both sides before ``fire()`` runs.
+A node has no LLM. It shares its triggers with the agents in range (name,
+description and input schema, in its capability card); an agent shows them
+to its own LLM as ``<node-name>:relay`` next to its own triggers, and when
+it decides to use one it sends ``fire_trigger`` here. The input is
+validated against ``input_schema`` on both sides before ``fire()`` runs.
 
-``"min_trust": 0`` in ``agent.json`` lets any agent in range fire them —
-fine for a demo. For a real actuator set it to 1 and pin the controller's
+Any agent in range may fire them — fine for a demo. For a real actuator add
+``"share": {{"min_trust": 1}}`` to ``agent.json`` and pin the controller's
 key in ``~/.loquor/pinned_keys.json`` so only that agent can.
+
+Try it by hand: ``loquor fire agent.json relay '{{"on": true}}'``.
 """
 
 from __future__ import annotations
@@ -207,47 +214,52 @@ class Relay(Trigger):
 
     async def fire(self, input):
         # Drive your hardware here (GPIO, serial, HTTP…). ``input`` is already valid.
+        # Or skip Python in agent.json: {{ "type": "gpio", "name": "relay", "pin": 17, "description": "…" }}
         print(f"[RELAY] {{'ON' if input['on'] else 'OFF'}}", flush=True)
         return {{"on": input["on"]}}
 '''
 
 NODE_README = """# {name}
 
-A **sensor node** made by `loquor init --node`: it measures and reports,
-and has no LLM. It runs the same protocol as a full agent — beacons,
-handshake, encryption — and answers `sensor_report` requests with its
-readings as data. No Ollama, no model: a Raspberry Pi Zero is enough
-(`./install.sh --node` on the device).
+A **node** made by `loquor init --node`: a device with sensors and a
+trigger, and **no brain** — no LLM, no Ollama; a Raspberry Pi Zero is
+enough (`./install.sh --node` on the device). It runs the same protocol as
+an agent — beacons, handshake, encryption — and shares its sensors and
+triggers with every agent in range.
 
 | file | what it is |
 |---|---|
-| `agent.json` | the profile: the node's name, description, sensors and the triggers it offers |
+| `agent.json` | the profile: name, description, sensors, triggers — no brain |
 | `sensors.py` | what it measures: a function and a class, both runnable as they are |
-| `triggers.py` | what it can do when an agent tells it to: one relay, offered through `offer_triggers` |
+| `triggers.py` | what it can do when an agent tells it to: one relay |
 
 ```bash
 loquor check {dir}/agent.json     # loads everything and reads each sensor once
+loquor read  {dir}/agent.json     # just the sensors, again
+loquor fire  {dir}/agent.json relay '{{"on": true}}'   # the relay, by hand
 loquor run   {dir}/agent.json     # on the air; Ctrl-C to stop
 loquor status "{name}"            # from another terminal: peers and readings
 ```
 
 Next steps:
 
-1. **Read your own instrument** in `sensors.py` (`Thermometer.read`), or
-   wire a shell command with no Python at all:
-   `{{ "type": "command", "name": "cpu_temp", "command": "vcgencmd measure_temp | tr -dc '0-9.'", "unit": "°C", "interval": 10 }}`.
-2. **Say what you measure** in `description`: the agents that find this
-   node read it to decide whether your numbers are what they need.
-3. **Drive your own hardware** in `triggers.py` (`Relay.fire`), and say
-   in its `description` when it should be used: the agent's LLM reads it.
-4. **Point an agent at it**: on a device with an LLM, a profile with
-   `{{ "type": "collect", "interval": 30, "goal": "…" }}` pulls the readings
-   from every node in range and may fire this node's relay as
-   `<node-name>:relay` (`loquor init` writes an agent; `demo/greenhouse`
-   is a complete one).
+1. **Read your own instrument**: edit `sensors.py`, or use a built-in
+   driver with no Python, e.g. a Raspberry Pi's CPU temperature:
+   `{{ "type": "file", "name": "cpu_temp", "path": "/sys/class/thermal/thermal_zone0/temp", "scale": 0.001, "unit": "°C", "interval": 10 }}`
+   (docs/HARDWARE.md has one recipe per interface).
+2. **Say what you measure** in `description` and in each sensor's
+   `description`: agents read them to decide whether your numbers are what
+   they need.
+3. **Drive your own hardware** in `triggers.py` (`Relay.fire`), or with
+   `{{ "type": "gpio", "name": "relay", "pin": 17, "description": "…" }}`, and
+   say in its `description` when it should be used: the agent's LLM reads it.
+4. **Point an agent at it**: on a device with an LLM, `loquor init my_agent`.
+   That agent sees `<node-name>:temperature` among its sensors and
+   `<node-name>:relay` among its triggers, and reads or fires them when its
+   brain needs to (`demo/greenhouse` is a complete example).
 5. **Keep it running**: `loquor service install {dir}/agent.json --now`.
 
-Reference: `docs/USAGE.md`.
+Reference: docs/CONCEPTS.md, docs/USAGE.md.
 """
 
 
@@ -255,7 +267,6 @@ def init(directory: Path, name: str | None = None, *, force: bool = False, node:
     """Write the starter files into ``directory``; returns the paths written."""
     directory = Path(directory)
     name = name or directory.resolve().name.replace("_", " ").replace("-", " ").strip().title() or "My Agent"
-    capability = f"{slug(name).replace('-', '_') or 'device'}_status"
     shown = directory.as_posix().rstrip("/") or "."
     if node:
         files = {
@@ -266,7 +277,7 @@ def init(directory: Path, name: str | None = None, *, force: bool = False, node:
         }
     else:
         files = {
-            "agent.json": PROFILE.format(schema=SCHEMA_URL, name=name, capability=capability),
+            "agent.json": PROFILE.format(schema=SCHEMA_URL, name=name),
             "prompt.txt": PROMPT.format(name=name),
             "sensors.py": SENSORS.format(name=name),
             "triggers.py": TRIGGERS.format(name=name),

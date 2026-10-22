@@ -191,8 +191,10 @@ web-only fields (no endpoint URL, no OAuth):
 ```
 {
   "name": str, "description": str, "version": str,
-  "skills": [ { "id": str, "name": str, "description": str, "tags": [str],   // + "triggers": {name: {description, input_schema}} on a fire_trigger entry
-                "input_schema": {...}, "output_schema": {...}, "min_trust": uint } ],
+  "skills": [ { "id": str, "name": str, "description": str, "tags": [str],
+                "input_schema": {...}, "output_schema": {...}, "min_trust": uint,
+                "sensors":  {name: {unit, description}},              // on a sensor_report entry
+                "triggers": {name: {description, input_schema}} } ],  // on a fire_trigger entry
   "llm":    { "model": str, "context_window": uint, "modalities": [str] },
   "extensions": [uint]
 }
@@ -201,7 +203,10 @@ web-only fields (no endpoint URL, no OAuth):
 Empty and default values are omitted. Capabilities are the skill ids; the
 beacon Bloom filter is derived from them. The agent builds the card from
 its skills (`capability`, `description`, `input_schema`, `output_schema`,
-`min_trust`) and its reasoner (`model`).
+`min_trust`, and what a skill advertises: the sensors `sensor_report`
+exposes, the triggers `offer_triggers` offers) and its reasoner (`model`).
+A peer that thinks mirrors those sensors and triggers as its own, named
+`<slug of the card's name>:<name>`; see [ARCHITECTURE.md](ARCHITECTURE.md#two-roles-node-and-agent).
 
 ## 7. Sessions **(extension)** — `extensions/session.py`
 
@@ -284,8 +289,11 @@ shows it; the protocol does not interpret it.
 ```
 
 Error codes: `no_such_capability`, `skill_failed`, `insufficient_trust`,
-`too_large`. The built-in capability `sensor_report` answers
+`too_large`. Built-in capabilities: `sensor_report` answers
 `{"sensor"?: name}` with `{"readings": {name: {value, unit, at, error?}}}` —
-an agent's sensors, as structured data, to any peer allowed to ask. A request is retried with the same `request_id` (3 attempts
+a device's sensors, as structured data, to any peer allowed to ask;
+`fire_trigger` takes `{"trigger": name, "input": {...}}`, validates the
+input against the trigger's schema and answers `{"trigger", "result"}`;
+`ask` (a brain) takes `{"question": str}` and answers `{"answer": str}`. A request is retried with the same `request_id` (3 attempts
 within 30 s); the responder caches its reply per `(sender, request_id)`
 and never runs a skill twice for one request.

@@ -60,8 +60,8 @@ def test_doctor_without_llm(capsys):
 
 
 def test_check_a_demo_profile_and_a_bad_one(capsys, tmp_path):
-    code, out = run_cli(["check", str(DEMO / "weather_agent.json"), "--no-llm", "--transport", "localhost"], capsys)
-    assert code == 0 and "Weather Forecaster" in out and "sensor weather" in out and "Ready." in out
+    code, out = run_cli(["check", str(DEMO / "weather_station.json"), "--no-llm", "--transport", "localhost"], capsys)
+    assert code == 0 and "Weather Station" in out and "sensor weather" in out and "Ready." in out
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"name": "B", "description": "d", "skills": [{"type": "nope"}]}))
     code, out = run_cli(["check", str(bad), "--no-llm"], capsys)
@@ -119,22 +119,45 @@ def test_status_and_trace_without_running_agents(capsys, home):
 
 def test_service_install_writes_a_unit_and_prints_the_next_commands(capsys, tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    code, out = run_cli(["service", "install", str(DEMO / "weather_agent.json"), "--transport", "wifi"], capsys)
+    code, out = run_cli(["service", "install", str(DEMO / "weather_station.json"), "--transport", "wifi"], capsys)
     assert code == 0 and "wrote" in out and "Then:" in out
     unit = re.search(r"wrote (\S+)", out).group(1)
     text = Path(unit).read_text(errors="replace")
     assert Path(unit).exists() and "--transport" in text and "wifi" in text  # plist lists arguments one per element
-    code, out = run_cli(["service", "uninstall", str(DEMO / "weather_agent.json")], capsys)
+    code, out = run_cli(["service", "uninstall", str(DEMO / "weather_station.json")], capsys)
     assert code == 0 and "removed" in out and not Path(unit).exists()
 
 
 def test_run_with_a_missing_model_fails_with_advice(capsys, tmp_path):
     Settings(ollama_url="http://127.0.0.1:1").save()  # nothing listens there
-    code, out = run_cli(["run", str(DEMO / "weather_agent.json"), "--transport", "localhost"], capsys)
-    assert code == 1 and "not available in Ollama" in out and "loquor doctor" in out
+    code, out = run_cli(["run", str(DEMO / "clothing_agent.json"), "--transport", "localhost"], capsys)
+    assert code == 1 and "ollama: not reachable" in out and "loquor doctor" in out
 
 
 def test_bare_profile_argument_means_run(capsys, tmp_path):
     Settings(ollama_url="http://127.0.0.1:1").save()
-    code, out = run_cli([str(DEMO / "weather_agent.json"), "--transport", "localhost"], capsys)
-    assert code == 1 and "not available in Ollama" in out  # it reached `run`
+    code, out = run_cli([str(DEMO / "clothing_agent.json"), "--transport", "localhost"], capsys)
+    assert code == 1 and "ollama: not reachable" in out  # it reached `run`
+
+
+def test_read_and_fire_by_hand(capsys):
+    tank = str(DEMO.parent / "greenhouse" / "node_tank.json")
+    code, out = run_cli(["read", tank], capsys)
+    assert code == 0 and re.search(r"water_level: [\d.]+ %", out)
+    code, out = run_cli(["read", tank, "water_level", "--json"], capsys)
+    assert code == 0 and json.loads(out)["water_level"]["unit"] == "%"
+    code, out = run_cli(["read", tank, "nope"], capsys)
+    assert code == 1 and "no sensor nope; have water_level" in out
+    code, out = run_cli(["fire", tank, "valve", '{"seconds": 30}'], capsys)
+    assert code == 0 and "VALVE OPEN for 30 s" in out and '"printed"' in out
+    code, out = run_cli(["fire", tank, "valve", '{"seconds": 1}'], capsys)
+    assert code == 1 and "less than the minimum of 5" in out and "valve takes:" in out
+    code, out = run_cli(["fire", tank, "valve", "not json"], capsys)
+    assert code == 2 and "not JSON" in out
+    code, out = run_cli(["fire", tank, "pump"], capsys)
+    assert code == 1 and "no trigger 'pump'; have valve" in out
+
+
+def test_ask_says_who_it_heard(capsys):
+    code, out = run_cli(["ask", "Nobody Here", "hello?", "--transport", "localhost", "--timeout", "0.5"], capsys)
+    assert code == 1 and "'Nobody Here' not heard within 0.5 s" in out

@@ -10,10 +10,11 @@ Where to look for what:
 
 | question | document |
 |---|---|
+| the model in one page: sensors, triggers, brain; nodes and agents | [CONCEPTS.md](CONCEPTS.md) |
 | what goes on the wire, byte by byte, with sequence diagrams | [PROTOCOL.md](PROTOCOL.md) |
-| how to run and what the demo shows | [../demo/weather_and_clothes/README.md](../demo/weather_and_clothes/README.md) |
+| how to run and what the demos show | [../demo/README.md](../demo/README.md) |
 | how to test, add a skill / transport / extension, conventions | [DEVELOPMENT.md](DEVELOPMENT.md) |
-| why the project exists and the PoC plan | [VISION.md](VISION.md), [POC_PLAN.md](POC_PLAN.md) |
+| why the project exists and the PoC plan | [VISION.md](VISION.md), [history/POC_PLAN.md](history/POC_PLAN.md) |
 
 ## Principles
 
@@ -26,13 +27,20 @@ Where to look for what:
 3. **Deterministic core, LLM at the edge.** The protocol node and the agent
    route, retry and track peers without a model. Only skills call the
    reasoner; no agent or LLM logic leaks into protocol code.
-4. **Extend by adding a file, configure by editing JSON.** A skill, reasoner
-   or transport is one class selected by `"type": "module:Class"`.
+4. **Configure by editing JSON, extend by adding a file.** A device is
+   sensors + triggers + an optional brain in one profile; built-in drivers
+   cover files, commands, HTTP, GPIO and serial. Anything else — a
+   sensor, trigger, skill, reasoner or transport — is one class selected
+   by `"type": "file.py:Class"`.
 5. **Sensors in, triggers out, LLM in between — never in control.** A
    sensor is a driver that produces readings; a trigger is a driver that
    performs an action. The LLM reads readings and *proposes* a trigger with
    an input; deterministic code validates the proposal against the trigger's
    schema before anything fires.
+6. **Nodes are read, agents are asked.** A device without a brain shares
+   its sensors and triggers as data; an agent mirrors them and reads them
+   only when its brain needs them. Agents ask each other questions in
+   plain language. No polling, no prose where numbers will do.
 
 ## Layers
 
@@ -42,8 +50,10 @@ Where to look for what:
 ┌─────▼─────────────────────────────────────────────────────────────────────┐
 │ agent  — orchestrator (no business logic)                                  │
 │   capability dispatch · RequestTracker · trust check                       │
-│   SensorHub (latest readings)      TriggerHub (propose → validate → fire)  │
-│   skills/  llm_answer · goal · collect · sensor_report · <yours>  ← logic │
+│   SensorHub (own + peers' sensors)  TriggerHub (propose → validate → fire) │
+│   mirror: peers' shared sensors/triggers → RemoteSensor / RemoteTrigger    │
+│   skills/  brain · sensor_report · offer_triggers · <yours>   ← logic      │
+│            (llm_answer · goal · collect: single-purpose, older)            │
 │            each gets a Context: reasoner, peers, ask(), sensors, triggers  │
 └──────┬──────────────────┬──────────────────┬─────────────────┬────────────┘
        │                  │                  │                 │
@@ -51,7 +61,9 @@ Where to look for what:
 │ extensions       │ │ reasoning    │ │ sensors      │ │ triggers       │
 │ query · session  │ │ Reasoner     │ │ Sensor       │ │ Trigger        │
 │ relay · trust    │ │ ollama ·     │ │ simulated ·  │ │ console ·      │
-│                  │ │ template     │ │ command ·    │ │ command ·      │
+│                  │ │ openai ·     │ │ command ·    │ │ command ·      │
+│                  │ │ none ·       │ │ file · http ·│ │ file · http ·  │
+│                  │ │ template     │ │ gpio · serial│ │ gpio · serial  │
 │                  │ │              │ │ <your driver>│ │ <your driver>  │
 └──────┬───────────┘ └──────────────┘ └──────────────┘ └────────────────┘
 ┌──────▼───────────────────────────────────────┐
@@ -81,16 +93,18 @@ src/loquor/
 ├── protocol/     identity.py envelope.py discovery.py card.py crypto.py node.py trust.py transport.py
 ├── transports/   multicast.py (localhost, wifi) · ble.py (bluetooth) · memory.py (tests)
 ├── extensions/   query.py · session.py · relay.py · trust.py
-├── reasoning/    base.py · ollama.py · none.py (sensor nodes) · template.py · trace.py (records every call)
-├── sensors/      base.py (Sensor, Reading, FunctionSensor) · builtin.py (simulated, command)
-├── triggers/     base.py (Trigger, FunctionTrigger) · builtin.py (console, command)
-├── agent/        agent.py · tracker.py · context.py · skill.py · sensors.py · triggers.py
-│                 remote.py (a peer's trigger as a local one)
-│                 skills/{llm_answer,goal,collect,sensor_report,offer_triggers}.py
-├── settings.py   device config: ~/.loquor/config.json (transport · model · beacon interval · logging)
-├── config.py     profile JSON → objects ("type" lookup) · profile.schema.json
-├── tools/        doctor.py · check.py · scaffold.py (init) · status.py · service.py
-└── cli.py        loquor run · check · doctor · init · status · trace · config · service
+├── reasoning/    base.py · ollama.py · openai.py · none.py (nodes) · template.py · trace.py (records every call)
+├── sensors/      base.py (Sensor, Reading, FunctionSensor) · builtin.py (simulated, command, file, http)
+│                 hardware.py (gpio, serial)
+├── triggers/     base.py (Trigger, FunctionTrigger) · builtin.py (console, command, file, http)
+│                 hardware.py (gpio, serial)
+├── agent/        agent.py (+ mirroring) · tracker.py · context.py · skill.py · sensors.py · triggers.py
+│                 remote.py (a peer's sensor or trigger as a local one)
+│                 skills/{brain,sensor_report,offer_triggers,llm_answer,goal,collect}.py
+├── settings.py   device config: ~/.loquor/config.json (transport · LLM backend and model · beacons · logging)
+├── config.py     profile JSON → objects (brain/share → skills; "type" lookup) · profile.schema.json
+├── tools/        doctor.py · check.py · scaffold.py (init) · ask.py · status.py · service.py
+└── cli.py        loquor run · check · read · fire · ask · doctor · init · status · trace · config · service
 install.sh · run_agent.py · demo/ · tests/ (one file per section + the dependency rule)
 ```
 
@@ -129,6 +143,7 @@ class Node:
     peers: PeerDirectory;  keys: dict[agent_id, bytes];  peer_heard: asyncio.Event
     def on_message(handler: (Peer, dict) -> Awaitable)   # decrypted MSG bodies
     def on_peer(handler: (Peer) -> Awaitable)            # after each handshake
+    def on_lost(handler: (Peer) -> None)                 # a peer silent for 3 beacon intervals
     def on_overheard(handler: (Envelope) -> None)        # envelopes for others (relays)
     def register(type: int, handler)                      # extensions own their types
     async def send(peer, body: dict, *, wait_ack=False)   # encrypted MSG
@@ -156,6 +171,7 @@ class Reading:
 class Sensor:
     name: str; description: str; unit: str
     interval: float | None = None          # poll every N s into the store; None = on demand
+    def __init__(self, *, name=None, description=None, unit=None, interval=...)  # profile overrides
     async def read(self) -> Reading        # required; return self.failed(msg) instead of raising
     async def run(self, publish) -> None   # optional: push loop; default polls read() every interval
 ```
@@ -167,6 +183,7 @@ class Trigger:
     name: str
     description: str                       # what it does and when to use it — the LLM reads this
     input_schema: dict                     # JSON schema; proposals are validated against it
+    def __init__(self, *, name=None, description=None, input_schema=None)       # profile overrides
     async def fire(self, input: dict) -> dict
 ```
 
@@ -181,15 +198,19 @@ weather and terminal card.
 class SensorHub:                                # ctx.sensors
     def latest(self, name) -> Reading | None    # from the store, no I/O
     async def read(self, name) -> Reading       # fresh, also stored
-    async def readings(self, names=None)        # stored for polled sensors, fresh for on-demand
+    async def readings(self, names=None)        # stored for polled sensors, fresh for on-demand, in parallel;
+                                                # a name not in the hub reads as "not in range"
     def describe(self, readings) -> str         # prompt-ready lines
+    def add(sensor); remove(name); local_names() # peers' sensors come and go at runtime
 
 class TriggerHub:                               # ctx.triggers
     def describe(self, names=None) -> str       # catalog for the prompt: name, description, schema
     async def propose(self, system, situation, allowed=None) -> Proposal
-        # asks the reasoner for JSON {trigger ∈ allowed ∪ null, input, reason};
-        # validates input against the trigger's schema; anything off → Proposal(None, reason)
+        # asks the reasoner for JSON {reason, trigger ∈ allowed ∪ none, input} — reason first,
+        # so a small model reasons before it chooses; validates input against the trigger's
+        # schema; anything off → Proposal(None, reason)
     async def fire(self, name, input) -> dict   # validates again, runs, logs; TriggerError on failure
+    def add(trigger); remove(name); local_names()
 ```
 
 The flow every skill with sensors and triggers follows:
@@ -197,13 +218,15 @@ The flow every skill with sensors and triggers follows:
 ```
 sensor.read() ──▶ SensorHub (latest) ──▶ describe() ──▶ LLM prompt
                                                            │
-LLM JSON {trigger, input, reason} ──▶ TriggerHub.propose() validates ──▶ fire() ──▶ trigger.fire()
+LLM JSON {reason, trigger, input} ──▶ TriggerHub.propose() validates ──▶ fire() ──▶ trigger.fire()
 ```
 
-Skills that use them: `llm_answer` with `"sensors": [...]` puts the readings
-at `{sensors}` in its prompt; `goal` gathers answers from one or many peers (`min_answers`, `settle`) and,
-with `"triggers": [...]`, proposes and fires one with its conclusion; `sensor_report` answers
-`{"sensor"?}` → `{"readings": {...}}` so peers get numbers, not prose.
+The `brain` uses both: it puts the readings at `{sensors}` when it
+answers a question, and for its goal reads them, asks agents, and
+proposes one of the triggers in `act`. `sensor_report` answers
+`{"sensor"?}` → `{"readings": {...}}` so peers get numbers, not prose,
+and lists the sensors in the card; `offer_triggers` does the same for
+triggers and fires them on a validated `fire_trigger` request.
 
 ### Skill and Context — `agent/skill.py`, `agent/context.py`
 
@@ -253,7 +276,7 @@ says `"relay": true`.
 Flow of one request:
 
 ```
-skill A: ctx.ask(peer, "weather_forecast", {"question": ...})
+skill A: ctx.ask(peer, "ask", {"question": ...})
   agent A: body {kind: request, request_id, capability, input} → node.send(peer)   (retried up to 3×)
     node A: MSG envelope, body encrypted with the A–B pair key, signed → transport.send(peer.address)
     node B: verify sig, decrypt, ACK → agent B: tracker.cached? resend : trust ok? skill.handle(input)
@@ -263,31 +286,28 @@ skill A: ctx.ask(peer, "weather_forecast", {"question": ...})
 
 ## Profile and device config — `config.py`, `settings.py`
 
-Two files configure a running agent, on purpose:
+Two files configure a running device, on purpose:
 
-- the **profile** (`agent.json`) says what the agent *is*: name,
-  description, persona, sensors, triggers, skills. It travels with the
-  agent's code and is the same on every device.
+- the **profile** (`agent.json`) says what the device *is*: name,
+  description, sensors, triggers, brain. It travels with the device's
+  code and is the same on every device.
 - the **device config** (`~/.loquor/config.json`) says what the device
-  *has*: which transport, which model its hardware can run, how often to
-  beacon, how much to log. `install.sh` writes it once.
+  *has*: which transport, which LLM backend and model its hardware runs,
+  how often to beacon, how much to log. `install.sh` writes it once.
 
 A profile may pin a transport, a reasoner or a beacon interval; the
-command line overrides both. `build_agent()` applies the precedence and
-instantiates every part through the one `"type"` lookup:
+command line overrides both. `build_agent()` applies the precedence,
+turns `brain` and `share` into skills (`skill_specs()`: a `Brain`,
+`SensorReport`, `OfferTriggers`), and instantiates every part through
+the one `"type"` lookup:
 
 ```json
 {
-  "name": "Weather Station",
-  "description": "One sentence other agents read to decide whether you can help them.",
-  "system_prompt_file": "prompt.txt",
-  "sensors":  [ { "type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5 } ],
-  "triggers": [ { "type": "console", "name": "print" } ],
-  "skills": [
-    { "type": "llm_answer", "capability": "weather_forecast", "sensors": ["weather"] },
-    { "type": "sensor_report" },
-    { "type": "my_farm.irrigation:Irrigation" }
-  ]
+  "name": "Greenhouse Controller",
+  "description": "One sentence other devices read to decide whether you can help them.",
+  "sensors":  [ { "type": "file", "name": "cpu_temp", "path": "/sys/class/thermal/thermal_zone0/temp", "scale": 0.001 } ],
+  "triggers": [ { "type": "drivers.py:Vent" } ],
+  "brain":    { "prompt_file": "prompt.txt", "goal": "…", "every": 15, "act": ["vent", "tank-node:valve"] }
 }
 ```
 
@@ -301,7 +321,10 @@ built. Every field: [USAGE.md](USAGE.md#profile).
 
 The agent stays unaware of them; they read what it exposes:
 
-- `check` builds a profile and reads each sensor once through the hubs.
+- `check` builds a profile and reads each sensor once through the hubs;
+  `read` and `fire` do one part by hand.
+- `ask` (`tools/ask.py`) is a throwaway, silent agent with no skills: it
+  waits for the target's handshake, sends one request, prints the answer.
 - `status` serialises `snapshot(agent)` — peers from the node's
   directory, readings from the `SensorHub`, `TriggerHub.history`, the
   `TracingReasoner`'s last calls, goal results — to a file every two
@@ -314,23 +337,33 @@ The agent stays unaware of them; they read what it exposes:
 ## Two roles: node and agent
 
 Nothing in the protocol distinguishes them; the profile does. An
-**agent** has a reasoner. A **node** has none (reasoner `none`, chosen
-automatically when no skill's `needs_reasoner` is true) and offers only
-data and action skills: `sensor_report` (its readings) and
-`offer_triggers` (its triggers, listed in the card under the skill
-entry's `triggers` key via `Skill.advertise`). Both beacon, handshake and
-encrypt the same way; a node's capability card simply has no `llm`
-entry. The `collect` skill is the agent-side counterpart: it pulls
-`sensor_report` from every node each round — structured readings in an
-envelope addressed to the collector, no model on the node — mirrors the
-nodes' offered triggers into its own hub as `RemoteTrigger`s
-(`agent/remote.py`, named `<node>:<trigger>`), and reasons over the
-table once. A proposal for a remote trigger is validated by the agent's
-hub, carried as a `fire_trigger` request, validated again by the node's
-hub and fired there. This keeps the LLM where decisions are made and lets
-the smallest boards join the mesh; a microcontroller firmware would
-implement beacon, HELLO, `sensor_report` and `fire_trigger` and nothing
-else.
+**agent** has a brain, so a reasoner. A **node** has none (reasoner
+`none`, chosen automatically when no skill's `needs_reasoner` is true)
+and offers only data and action skills: `sensor_report` (its readings;
+its sensors listed in the card entry's `sensors` key via
+`Skill.advertise`) and `offer_triggers` (its triggers, under the entry's
+`triggers` key). Both beacon, handshake and encrypt the same way; a
+node's card simply has no `llm` entry.
+
+An agent **mirrors** what its peers share (`Agent._mirror_peer`, on every
+HELLO): each shared sensor becomes a `RemoteSensor` in its `SensorHub`
+and each shared trigger a `RemoteTrigger` in its `TriggerHub`, named
+`<peer>:<name>` (`agent/remote.py`). `Node.on_lost` drops them when the
+peer goes silent. A `RemoteSensor` is on demand: reading it sends
+`sensor_report` to the node, and a `RemoteSource` per node reuses the
+answer for every sensor of that node for 5 s. A proposal for a
+`RemoteTrigger` is validated by the agent's hub, carried as a
+`fire_trigger` request, validated again by the node's hub and fired
+there. Nodes do not mirror (they have nothing to think with), and a
+skill's defaults use only *local* parts (`local_names()`), so a device
+never re-shares what it mirrored.
+
+The `brain` reads nodes' mirrored sensors by default and *asks* agents
+(peers with a capability that is not data); an agent's shared sensors
+are read only when named. This keeps the LLM where decisions are made
+and lets the smallest boards join the mesh; a microcontroller firmware
+would implement beacon, HELLO, `sensor_report` and `fire_trigger` and
+nothing else.
 
 ## What is deliberately not here
 
@@ -352,10 +385,10 @@ else.
    transport for bulk data.
 2. **Session transports** — TCP on the same Wi-Fi, then BLE L2CAP.
 3. **Gossip wire message** between relays (type ≥ 16), and UWB proximity.
-4. **Watch skill** — "every N seconds, put these readings in front of the
-   LLM, let it pick a trigger": the sensor → LLM → trigger loop with no
-   peer involved. All the parts exist; it is a 30-line skill.
-5. **A PyPI release**, so a device needs `pip install loquor-aac[ble]`
+4. **Pushed readings** — a node notifies its subscribers when a reading
+   crosses a threshold, so an agent's brain can wake on an event instead
+   of a round.
+5. **A PyPI release**, so a device needs `pip install loquor-aac[ble,hw]`
    and no clone.
 6. **A node firmware** for microcontrollers (ESP32: libsodium, CBOR,
-   BLE advertising): beacon, HELLO and `sensor_report` only.
+   BLE advertising): beacon, HELLO, `sensor_report` and `fire_trigger` only.

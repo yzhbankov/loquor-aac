@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from loquor.agent import Skill
-from loquor.agent.skills import Goal, LlmAnswer, SensorReport
+from loquor.agent.skills import Brain
 from loquor.config import build_agent, load_profile, resolve_type
 from loquor.protocol import Identity, Visibility
-from loquor.reasoning import OllamaReasoner, TemplateReasoner
+from loquor.reasoning import NoReasoner, OllamaReasoner, TemplateReasoner
 from loquor.sensors import FunctionSensor
 from loquor.transports import MulticastTransport
 from loquor.triggers import FunctionTrigger
@@ -43,28 +43,26 @@ def home(tmp_path, monkeypatch):
 
 
 def test_demo_profiles_build(home):
-    weather = build_agent(load_profile(DEMO / "weather_agent.json"), base_dir=DEMO)
-    assert weather.capabilities == ["weather_forecast", "sensor_report"]
-    assert isinstance(weather.reasoner, OllamaReasoner) and weather.reasoner.model == "qwen2.5:3b"  # device default
-    assert isinstance(weather.transport, MulticastTransport) and weather.transport.interface == "127.0.0.1"
-    assert weather.sensors.names() == ["weather"] and weather.sensors.get("weather").interval == 5
-    assert weather.skills[0].sensors == ("weather",) and isinstance(weather.skills[1], SensorReport)
-    assert (home / "keys" / "weather-forecaster.key").exists()
+    station = build_agent(load_profile(DEMO / "weather_station.json"), base_dir=DEMO)
+    assert station.capabilities == ["sensor_report"] and isinstance(station.reasoner, NoReasoner)  # a node
+    assert isinstance(station.transport, MulticastTransport) and station.transport.interface == "127.0.0.1"
+    assert station.sensors.names() == ["weather"] and station.sensors.get("weather").interval == 5
+    assert (home / "keys" / "weather-station.key").exists()
     # The same profile gets the same identity next time.
-    assert build_agent(load_profile(DEMO / "weather_agent.json"), base_dir=DEMO).agent_id == weather.agent_id
+    assert build_agent(load_profile(DEMO / "weather_station.json"), base_dir=DEMO).agent_id == station.agent_id
 
     clothing = build_agent(load_profile(DEMO / "clothing_agent.json"), base_dir=DEMO)
-    answer, goal = clothing.skills
-    assert isinstance(answer, LlmAnswer) and isinstance(goal, Goal)
-    assert clothing.triggers.names() == ["show_outfit"] and goal.triggers == ("show_outfit",)
+    (brain,) = clothing.skills  # no sensors: nothing to share
+    assert isinstance(brain, Brain) and brain.act == ("show_outfit",) and brain.every is None
+    assert isinstance(clothing.reasoner, OllamaReasoner) and clothing.reasoner.model == "qwen2.5:3b"  # device default
+    assert clothing.triggers.names() == ["show_outfit"] and clothing.capabilities == ["ask"]
     assert "forecast" in clothing.triggers.get("show_outfit").input_schema["properties"]
-    # The profile-level system_prompt reaches both skills.
-    assert answer.system_prompt == goal.system_prompt and "Clothing Advisor" in goal.system_prompt
-    assert clothing.agent_id != weather.agent_id
+    assert "Clothing Advisor" in brain.system_prompt  # read from prompt_file
+    assert clothing.agent_id != station.agent_id
 
 
 def test_command_line_overrides(tmp_path):
-    profile = load_profile(DEMO / "weather_agent.json")
+    profile = load_profile(DEMO / "clothing_agent.json")
     identity = Identity.generate()
     agent = build_agent(profile, base_dir=DEMO, model="llama3.1:8b", transport="localhost",
                         visibility="quiet", identity=identity)
@@ -78,7 +76,7 @@ def test_profile_validation(tmp_path):
     with pytest.raises(ValueError, match=r"unknown fields \['descripton'\]; missing fields \['description'\]"):
         load_profile(bad)
     bad.write_text(json.dumps({"name": "X", "description": "d", "skills": []}))
-    with pytest.raises(ValueError, match="non-empty list"):
+    with pytest.raises(ValueError, match="it does nothing"):
         load_profile(bad)
     bad.write_text(json.dumps({"name": "X", "description": "d", "skills": [{"type": "goal"}], "sensors": {}}))
     with pytest.raises(ValueError, match="sensors must be a list"):
@@ -98,9 +96,11 @@ def test_profile_validation(tmp_path):
         load_profile(bad)
     with pytest.raises(ValueError, match="does not exist"):
         load_profile(tmp_path / "missing.json")
-    # every demo profile matches the schema, "$schema" included
-    for demo in (DEMO.parent / "triage").glob("*.json"):
-        assert "$schema" not in load_profile(demo)
+    # every demo profile matches the schema, "$schema" included, and builds
+    for demo in DEMO.parent.glob("*/*.json"):
+        profile = load_profile(demo)
+        assert "$schema" not in profile and "skills" not in profile  # demos use the simple form
+        build_agent(profile, base_dir=demo.parent, identity=Identity.generate())
 
 
 def test_prompt_files_and_profile_level_beacon_interval(tmp_path):

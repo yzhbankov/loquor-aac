@@ -1,35 +1,43 @@
 """Profile JSON -> a configured :class:`Agent`.
 
-A profile names the agent and lists its parts. Each part is a dict with a
-``"type"`` — a built-in name, ``"module:Class"`` for an installed module, or
-``"file.py:Class"`` for a file next to the profile — and the constructor's
-keyword arguments::
+A profile describes one device: who it is, what it measures, what it can
+do, and — if it thinks — how::
 
     {
-      "name": "Weather Station",
-      "description": "I report tomorrow's weather.",
-      "system_prompt_file": "prompt.txt",                 # or "system_prompt": "You are ..."
-      "visibility": "visible",                            # visible | quiet | silent
-      "sensors":  [{"type": "weather_sensor.py:RandomWeather", "name": "weather", "interval": 5}],
-      "triggers": [{"type": "console", "name": "print"}],
-      "skills": [
-        {"type": "llm_answer", "capability": "weather_forecast", "sensors": ["weather"]},
-        {"type": "my_farm.irrigation:Irrigation"}
-      ]
+      "name": "Greenhouse Controller",
+      "description": "I run the greenhouse.",                   # what other agents' LLMs read
+      "sensors":  [{"type": "command", "name": "cpu_temp", "command": "...", "unit": "°C", "interval": 10}],
+      "triggers": [{"type": "console", "name": "vent", "description": "Open or close the roof vent."}],
+      "brain": {                                                  # leave out on a device without an LLM
+        "prompt_file": "prompt.txt",
+        "goal": "Keep the soil above 30 % moisture.",
+        "every": 30,
+        "act": ["vent", "tank-node:valve"]
+      }
     }
+
+- **No ``brain``** = a **node**: no LLM, no Ollama. It shares its sensors
+  (``sensor_report``) and triggers (``offer_triggers``) with agents in range.
+- **``brain``** = an **agent**: it answers questions and, with a ``goal``,
+  reads what it needs (its sensors and those nodes share), asks agents
+  that can help, and acts. It shares its sensors too, not its triggers.
+- **``share``** changes what is shared: ``false``, or
+  ``{"sensors": true | [names], "triggers": true | [names], "min_trust": 1}``.
+- **``skills``** adds skills by hand, for behaviour the brain does not cover.
+  A profile with ``skills`` shares nothing it does not list, unless it
+  sets ``share``.
+
+Each sensor, trigger and skill is a *part*: a dict with a ``"type"`` — a
+built-in name, ``"module:Class"`` for an installed module, or
+``"file.py:Class"`` for a file next to the profile — and the constructor's
+keyword arguments. Sensors and triggers may also be plain functions; they
+are wrapped automatically. That ``"type"`` lookup is the whole extension
+mechanism.
 
 Transport, model and beacon interval come from the device config
 (:mod:`loquor.settings`) unless the profile pins them (``"transport"``,
 ``"reasoner"``, ``"beacon_interval"``) or the command line overrides them.
 The full list of fields is ``profile.schema.json`` next to this module.
-
-A profile whose skills never call the reasoner (only ``sensor_report``,
-say) is a **node**: it gets ``reasoner "none"`` and needs no Ollama.
-``"reasoner": {"type": "none"}`` says so explicitly; combined with a skill
-that needs an LLM it is refused at startup.
-
-Sensors and triggers may also be plain functions; they are wrapped
-automatically. That ``"type"`` lookup is the whole extension mechanism.
 """
 
 from __future__ import annotations
@@ -50,15 +58,15 @@ from loquor.agent.agent import Agent
 from loquor.agent.skills import BUILTIN_SKILLS
 from loquor.protocol.discovery import Visibility, slug
 from loquor.protocol.identity import Identity
-from loquor.reasoning import NoReasoner, OllamaReasoner, TemplateReasoner
+from loquor.reasoning import NoReasoner, OllamaReasoner, OpenAIReasoner, TemplateReasoner
 from loquor.sensors import BUILTIN_SENSORS, FunctionSensor
 from loquor.settings import Settings, loquor_home
 from loquor.transports import TRANSPORTS, make_transport
 from loquor.triggers import BUILTIN_TRIGGERS, FunctionTrigger
 
-BUILTIN_REASONERS = {"ollama": OllamaReasoner, "template": TemplateReasoner, "none": NoReasoner}
+BUILTIN_REASONERS = {"ollama": OllamaReasoner, "openai": OpenAIReasoner, "template": TemplateReasoner, "none": NoReasoner}
 
-REQUIRED_FIELDS = {"name", "description", "skills"}
+REQUIRED_FIELDS = {"name", "description"}
 
 __all__ = ["build_agent", "load_profile", "profile_schema", "resolve_type", "instantiate", "loquor_home"]
 
@@ -91,9 +99,7 @@ def load_profile(path: str | Path) -> dict[str, Any]:
             missing and f"missing fields {missing}",
         ) if p]
         raise ValueError(f"invalid profile {path}: " + "; ".join(problems))
-    if not isinstance(data["skills"], list) or not data["skills"]:
-        raise ValueError(f"invalid profile {path}: skills must be a non-empty list")
-    for key in ("sensors", "triggers"):
+    for key in ("sensors", "triggers", "skills"):
         if key in data and not isinstance(data[key], list):
             raise ValueError(f"invalid profile {path}: {key} must be a list")
     try:
@@ -103,23 +109,28 @@ def load_profile(path: str | Path) -> dict[str, Any]:
         raise ValueError(f"invalid profile {path}: {where}: {exc.message}") from None
     data.pop("$schema", None)
     _read_prompt_files(data, path.parent)
+    if not (data.get("brain") or data.get("skills") or data.get("sensors") or data.get("triggers")):
+        raise ValueError(f"invalid profile {path}: it does nothing; give it sensors or triggers to share, "
+                         "a \"brain\", or \"skills\"")
     return data
 
 
 def _read_prompt_files(data: dict[str, Any], base_dir: Path) -> None:
-    """``system_prompt_file`` (profile or skill) -> ``system_prompt``."""
-    holders = [data, *(s for s in data["skills"] if isinstance(s, dict))]
-    for holder in holders:
-        file = holder.pop("system_prompt_file", None)
+    """``system_prompt_file`` (profile or skill) and the brain's ``prompt_file`` -> the prompt text."""
+    holders = [(data, "system_prompt"), *((s, "system_prompt") for s in data.get("skills") or [] if isinstance(s, dict))]
+    if isinstance(data.get("brain"), dict):
+        holders.append((data["brain"], "prompt"))
+    for holder, key in holders:
+        file = holder.pop(f"{key}_file", None)
         if file is None:
             continue
         prompt_path = Path(file).expanduser()
         if not prompt_path.is_absolute():
             prompt_path = base_dir / prompt_path
         try:
-            holder["system_prompt"] = prompt_path.read_text().strip()
+            holder[key] = prompt_path.read_text().strip()
         except OSError as exc:
-            raise ValueError(f"cannot read system_prompt_file {file!r}: {exc}") from None
+            raise ValueError(f"cannot read {key}_file {file!r}: {exc}") from None
 
 
 def build_agent(
@@ -157,10 +168,10 @@ def build_agent(
     skills = [
         instantiate(spec, BUILTIN_SKILLS, "skill", defaults={"system_prompt": profile.get("system_prompt")},
                     base_dir=base_dir)
-        for spec in profile["skills"]
+        for spec in skill_specs(profile)
     ]
     thinking = [type(s).__name__ for s in skills if s.needs_reasoner]
-    reasoner_spec = dict(profile.get("reasoner") or ({"type": "ollama"} if thinking else {"type": "none"}))
+    reasoner_spec = dict(profile.get("reasoner") or ({"type": settings.reasoner} if thinking else {"type": "none"}))
     if reasoner_spec.get("type") == "none" and thinking:
         raise ValueError(
             f"profile says reasoner \"none\" but {', '.join(thinking)} need an LLM; "
@@ -169,6 +180,11 @@ def build_agent(
     if reasoner_spec.get("type") == "ollama":
         reasoner_spec.setdefault("model", settings.model)
         reasoner_spec.setdefault("base_url", settings.ollama_url)
+    if reasoner_spec.get("type") == "openai":
+        reasoner_spec.setdefault("model", settings.model)
+        reasoner_spec.setdefault("base_url", settings.openai_url)
+        if settings.api_key:
+            reasoner_spec.setdefault("api_key", settings.api_key)
     if model and reasoner_spec.get("type") != "none":
         reasoner_spec["model"] = model
     sensors = [instantiate(spec, BUILTIN_SENSORS, "sensor", wrap=FunctionSensor, base_dir=base_dir)
@@ -195,6 +211,35 @@ def build_agent(
         sensors=sensors,
         triggers=triggers,
     )
+
+
+def skill_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """The skills a profile asks for: its ``brain`` and ``share`` turned into skill specs, then its ``skills``."""
+    explicit = [dict(s) for s in profile.get("skills") or []]
+    types = {s.get("type") for s in explicit}
+    specs: list[dict[str, Any]] = []
+    brain = profile.get("brain")
+    if brain:
+        spec = {"type": "brain", **{k: v for k, v in brain.items() if k != "prompt"}}
+        if brain.get("prompt"):
+            spec["system_prompt"] = brain["prompt"]
+        specs.append(spec)
+    # A profile that lists skills by hand chose what it offers; it shares more only if it says so.
+    share = profile.get("share", not explicit)
+    if share is False:
+        share = {"sensors": False, "triggers": False}
+    elif share is True:
+        share = {}
+    min_trust = share.get("min_trust", 0)
+    sensors = share.get("sensors", True)
+    triggers = share.get("triggers", not brain)  # a node shares its triggers; an agent keeps them
+    if sensors and profile.get("sensors") and "sensor_report" not in types:
+        specs.append({"type": "sensor_report", "min_trust": min_trust,
+                      **({"sensors": sensors} if isinstance(sensors, list) else {})})
+    if triggers and profile.get("triggers") and "offer_triggers" not in types:
+        specs.append({"type": "offer_triggers", "min_trust": min_trust,
+                      **({"triggers": triggers} if isinstance(triggers, list) else {})})
+    return specs[:1] + explicit + specs[1:] if brain else explicit + specs
 
 
 def _build_transport(spec: dict[str, Any], base_dir: Path | None):

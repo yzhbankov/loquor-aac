@@ -46,15 +46,19 @@ async def check_profile(path: Path, settings: Settings, *, llm: bool = True, **o
 
 
 def describe(agent: Agent) -> list[str]:
-    role = "node (no LLM)" if agent.reasoner.name == "none" else "agent"
+    role = "node (no LLM): shares its sensors and triggers" if agent.reasoner.name == "none" else "agent (has a brain)"
     lines = [f"{agent.name} — {agent.description}", f"  role       : {role}",
              f"  identity   : {agent.agent_id.hex()}",
+             f"  pin entry  : \"{agent.agent_id.hex()}\": \"{agent.identity.public_key.hex()}\"   (for a peer's pinned_keys.json)",
              f"  model      : {getattr(agent.reasoner, 'model', None) or agent.reasoner.name}",
              f"  transport  : {_transport_name(agent)}",
              f"  visibility : {agent.node.visibility.value}, beacon every {agent.node.beacon_interval:g} s"]
     lines.append(f"  offers     : {', '.join(agent.capabilities) or 'nothing (only pursues goals)'}")
     for skill in agent.skills:
         kind = type(skill).__name__
+        if kind == "Brain":
+            lines.append("    - " + describe_brain(skill))
+            continue
         uses = []
         if getattr(skill, "sensors", ()):
             uses.append(f"sensors {list(skill.sensors)}")
@@ -68,6 +72,17 @@ def describe(agent: Agent) -> list[str]:
     lines.append(f"  sensors    : {', '.join(agent.sensors.names()) or 'none'}")
     lines.append(f"  triggers   : {', '.join(agent.triggers.names()) or 'none'}")
     return lines
+
+
+def describe_brain(brain: Any) -> str:
+    parts = [f"Brain: answers {brain.capability!r}" if brain.capability else "Brain: answers nothing"]
+    if brain.goal:
+        when = f"every {brain.every:g} s" if brain.every else "once"
+        parts.append(f"goal {brain.goal!r} {when}")
+        reads = "its own sensors and every node's in range" if brain.read is None else ", ".join(brain.read) or "nothing"
+        acts = "every trigger it can reach" if brain.act is None else ", ".join(brain.act) or "nothing (never acts)"
+        parts.append(f"reads {reads}; may fire {acts}")
+    return "; ".join(parts)
 
 
 async def check_sensors(agent: Agent) -> list[Check]:
@@ -111,18 +126,21 @@ def check_triggers(agent: Agent) -> list[Check]:
 
 
 async def check_reasoner(agent: Agent, settings: Settings) -> list[Check]:
-    from loquor.reasoning import OllamaReasoner, ollama_available  # noqa: PLC0415
+    from loquor.reasoning import reasoner_problem  # noqa: PLC0415
 
     reasoner = getattr(agent.reasoner, "inner", agent.reasoner)
     if reasoner.name == "none":
         return [Check("reasoner", OK, "none: a sensor node, no LLM needed")]
-    if not isinstance(reasoner, OllamaReasoner):
+    if reasoner.name not in ("ollama", "openai"):
         return [Check("reasoner", OK, f"{reasoner.name} (no model needed)")]
-    if not await ollama_available(reasoner.base_url):
-        return [Check("ollama", FAIL, f"not reachable at {reasoner.base_url}", "loquor doctor")]
-    if not await ollama_available(reasoner.base_url, model=reasoner.model):
-        return [Check(f"model {reasoner.model}", FAIL, "not pulled", f"ollama pull {reasoner.model}")]
-    return [Check(f"model {reasoner.model}", OK, "pulled")]
+    if not settings.llm:
+        return [Check("reasoner", FAIL, "this device is a sensor node (llm false) but the profile has a brain",
+                      "run it on a device with an LLM, or: loquor config set llm true")]
+    problem = await reasoner_problem(reasoner)
+    if problem:
+        return [Check(problem[0], FAIL, problem[1], problem[2])]
+    where = getattr(reasoner, "base_url", "")
+    return [Check(f"model {reasoner.model}", OK, f"{'pulled' if reasoner.name == 'ollama' else 'server up'} ({where})")]
 
 
 def _transport_name(agent: Agent) -> str:

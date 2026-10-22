@@ -9,7 +9,10 @@ An :class:`Agent` is generic plumbing configured by a profile. It:
    checking the requester's trust level — and sends back its output (or an
    error), idempotently;
 3. offers skills ``ask()``: send a request to a peer, retry, return the
-   output.
+   output;
+4. if it thinks (has a reasoner), mirrors the sensors and triggers that
+   peers share into its own hubs as ``<peer>:<name>``, and drops them when
+   the peer is lost, so skills and the LLM use them like local ones.
 
 Business logic — what to answer, whom to ask, when — lives in skills.
 
@@ -30,6 +33,8 @@ from collections.abc import Iterable
 from typing import Any
 
 from loquor.agent.context import Context
+from loquor.agent.remote import RemoteSensor, RemoteSource, RemoteTrigger, is_remote_name, remote_name, \
+    remote_sensors_of, remote_triggers_of
 from loquor.agent.sensors import SensorHub
 from loquor.agent.skill import Skill
 from loquor.agent.tracker import RequestError, RequestTracker
@@ -71,6 +76,7 @@ class Agent:
         relay: bool = False,  # store and forward for peers out of reach (§8)
         sensors: Iterable[Sensor] = (),
         triggers: Iterable[Trigger] = (),
+        mirror: bool | None = None,  # use peers' shared sensors and triggers; default: if it has an LLM
     ):
         self.name = name
         self.description = description
@@ -91,7 +97,7 @@ class Agent:
         self.triggers = TriggerHub(triggers, reasoner)
         for skill in self.skills:  # a skill naming something the agent lacks fails now, not at runtime
             for kind, hub in (("sensor", self.sensors), ("trigger", self.triggers)):
-                missing = [n for n in getattr(skill, f"{kind}s", ()) if n not in hub]
+                missing = [n for n in getattr(skill, f"{kind}s", ()) if n not in hub and not is_remote_name(n)]
                 if missing:
                     raise ValueError(
                         f"skill {type(skill).__name__} uses {kind}s {missing} the agent does not have "
@@ -108,6 +114,13 @@ class Agent:
         self.tracker = RequestTracker()
         self.context = Context(self)
         self._tasks: set[asyncio.Task] = set()
+
+        self.mirror = reasoner.name != "none" if mirror is None else mirror
+        self.remote_sensors: dict[str, Peer] = {}  # hub name -> the peer it lives on
+        self.remote_triggers: dict[str, Peer] = {}
+        if self.mirror:
+            self.node.on_peer(self._mirror_peer)
+            self.node.on_lost(self._unmirror_peer)
 
     def card(self) -> AgentCard:
         """The capability document (AMP §6) built from this agent's parts."""
@@ -162,6 +175,48 @@ class Agent:
         self._tasks.discard(task)
         if not task.cancelled() and task.exception() is not None:
             log.error("%s: background task failed", self.uid, exc_info=task.exception())
+
+    # --------------------------------------------------------------- mirror
+
+    async def _mirror_peer(self, peer: Peer) -> None:
+        """Bring this peer's shared sensors and triggers into the hubs (after every HELLO)."""
+        sensors, triggers = remote_sensors_of(peer), remote_triggers_of(peer)
+        wanted_s = {remote_name(peer, n) for n in sensors}
+        wanted_t = {remote_name(peer, n) for n in triggers}
+        self._unmirror_peer(peer, keep=(wanted_s, wanted_t))
+        added = []
+        source = None
+        for sensor, spec in sensors.items():
+            name = remote_name(peer, sensor)
+            if name in self.remote_sensors or self._taken(self.sensors, name, peer):
+                continue
+            source = source or RemoteSource(peer, self.context)
+            self.sensors.add(RemoteSensor(source, sensor, spec["unit"], spec["description"]))
+            self.remote_sensors[name] = peer
+            added.append(name)
+        for trigger, spec in triggers.items():
+            name = remote_name(peer, trigger)
+            if name in self.remote_triggers or self._taken(self.triggers, name, peer):
+                continue
+            self.triggers.add(RemoteTrigger(peer, trigger, spec["description"], spec["input_schema"], self.context))
+            self.remote_triggers[name] = peer
+            added.append(name)
+        if added:
+            log.info("%s: %s shares %s", self.uid, peer.label, ", ".join(added))
+
+    def _taken(self, hub: Any, name: str, peer: Peer) -> bool:
+        if name not in hub:
+            return False
+        log.warning("%s: %s shares %s, but that name is taken (two peers with the same name?)", self.uid, peer.label, name)
+        return True
+
+    def _unmirror_peer(self, peer: Peer, keep: tuple[set[str], set[str]] = (set(), set())) -> None:
+        """Drop what this peer shared (all of it when it is lost; what it no longer offers otherwise)."""
+        for mirrored, hub, kept in ((self.remote_sensors, self.sensors, keep[0]), (self.remote_triggers, self.triggers, keep[1])):
+            for name, owner in list(mirrored.items()):
+                if owner.agent_id == peer.agent_id and name not in kept:
+                    hub.remove(name)
+                    del mirrored[name]
 
     # ------------------------------------------------------------ requester
 

@@ -9,7 +9,8 @@ and how to keep the agent running after a reboot.
 
 ```bash
 git clone https://github.com/yzhbankov/loquor-aac.git && cd loquor-aac
-./install.sh
+./install.sh            # a device with a brain (an agent): everything below
+./install.sh --node     # a device without one (a node): no Ollama, no model
 ```
 
 What it does, in order, skipping anything already done:
@@ -27,10 +28,11 @@ What it does, in order, skipping anything already done:
 Flags:
 
 ```
---node                a sensor node: no Ollama, no model; sets `llm false` in the device config
+--node                a node: no Ollama, no model; sets `llm false` in the device config
+--hw                  also the GPIO and serial libraries, for the gpio and serial drivers
 --model NAME          use this model instead of the one chosen by RAM
 --transport T         save the transport too: localhost | wifi | bluetooth
---no-ollama           skip Ollama and the model (you run them elsewhere, or use the template reasoner)
+--no-ollama           skip Ollama and the model (you run them elsewhere, use another LLM server, or the template reasoner)
 --no-model            install Ollama but pull nothing
 --no-ble              skip the Bluetooth libraries and BlueZ
 --ble-le-mode         Linux: put BlueZ in LE-only mode (see Bluetooth below); needs sudo
@@ -48,7 +50,7 @@ build), these are the same steps:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[ble]"              # or `pip install -e .` without Bluetooth
+pip install -e ".[ble]"              # or `pip install -e .` without Bluetooth; add ",hw" for GPIO and serial
 # Ollama: https://ollama.com/download, then:
 ollama pull qwen2.5:3b               # or 1.5b / 0.5b for small boards
 loquor config set model qwen2.5:3b
@@ -74,11 +76,29 @@ failure. Nothing else needs to pass before `loquor run` works.
 - The script uses `sudo apt-get` for Python, venv and BlueZ.
 - Raspberry Pi 4 (4 GB) and 5: `qwen2.5:1.5b` answers in a few seconds;
   `qwen2.5:3b` works on the 8 GB models but is slow. Pi Zero / 3: make it
-  a **sensor node** (`./install.sh --node`, no LLM at all) and let an
+  a **node** (`./install.sh --node --hw`, no LLM at all) and let an
   agent elsewhere do the thinking; or run Ollama on another machine on
   the same network and point to it:
   `loquor config set ollama_url http://192.168.1.10:11434`.
+- GPIO and serial drivers: `./install.sh --hw` (gpiozero, pyserial). The
+  user running the agent must be in the `gpio` and `dialout` groups
+  (`sudo usermod -aG gpio,dialout $USER`, then log in again).
 - For Bluetooth between two laptops, see below.
+
+### Another LLM server instead of Ollama
+
+Any server that speaks the OpenAI API works — llama.cpp's
+`llama-server` (light enough for a Pi 5), LM Studio, vLLM, LocalAI:
+
+```bash
+./install.sh --no-ollama
+llama-server -m qwen2.5-1.5b-instruct-q4_k_m.gguf --port 8080 &      # for example
+loquor config set reasoner openai openai_url http://localhost:8080/v1 model qwen2.5-1.5b-instruct
+loquor doctor                                                         # "llm server: reachable"
+```
+
+`api_key` (or `LOQUOR_API_KEY`) if the server wants one. The server can
+be another machine on the LAN; nothing goes beyond it.
 
 ### Fedora, Arch, other Linux
 

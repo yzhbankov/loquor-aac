@@ -11,9 +11,5 @@
       "description": "Open the irrigation valve for a number of seconds to water the beds. Use it when soil moisture is low and the tank has water.",
       "input_schema": { "type": "object", "properties": { "seconds": { "type": "integer", "minimum": 5, "maximum": 120 } }, "required": ["seconds"] },
       "template": "\n💧  VALVE OPEN for {seconds} s\n" }
-  ],
-  "skills": [
-    { "type": "sensor_report" },
-    { "type": "offer_triggers", "min_trust": 0 }
   ]
 }

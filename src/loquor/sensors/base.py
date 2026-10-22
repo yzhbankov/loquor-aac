@@ -18,6 +18,19 @@ Rules for a sensor:
 4. Import nothing from loquor but this module. A sensor knows nothing about
    agents, peers or LLMs; that is what keeps it reusable.
 
+A class sets its contract as class attributes; the profile may override
+``name``, ``description``, ``unit`` and ``interval`` per instance, with no
+``__init__`` to write::
+
+    class Thermometer(Sensor):
+        name, unit, interval = "thermometer", "°C", 10
+        async def read(self):
+            return self.reading(await read_my_device())
+    # profile: {"type": "drivers.py:Thermometer", "name": "greenhouse_air", "interval": 30}
+
+A class that takes its own arguments (a port, a pin) defines ``__init__``
+and passes the rest on: ``super().__init__(**fields)``.
+
 A plain function works too::
 
     async def read_temp():            # or a sync def
@@ -33,6 +46,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+_KEEP = object()  # Sensor(interval=None) means on demand, so absence needs its own marker
 
 
 @dataclass
@@ -94,6 +109,18 @@ class Sensor:
     description: str = ""  # one line the LLM reads: what this measures
     unit: str = ""
     interval: float | None = None  # poll every N seconds; None = on demand only
+
+    def __init__(self, *, name: str | None = None, description: str | None = None, unit: str | None = None,
+                 interval: Any = _KEEP):
+        """The profile's per-instance overrides of the class attributes."""
+        if name is not None:
+            self.name = name
+        if description is not None:
+            self.description = description
+        if unit is not None:
+            self.unit = unit
+        if interval is not _KEEP:
+            self.interval = interval
 
     async def read(self) -> Reading:
         raise NotImplementedError

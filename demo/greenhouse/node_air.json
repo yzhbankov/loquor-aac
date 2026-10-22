@@ -5,7 +5,7 @@
   "sensors": [
     { "type": "simulated", "name": "air_temperature", "min": 18, "max": 42, "start": 33, "step": 2, "unit": "°C", "interval": 5,
       "description": "Air temperature under the roof; above 35 °C the plants suffer." },
-    { "type": "simulated", "name": "humidity", "min": 30, "max": 95, "start": 70, "step": 4, "unit": "%", "interval": 5 }
-  ],
-  "skills": [ { "type": "sensor_report" } ]
+    { "type": "simulated", "name": "humidity", "min": 30, "max": 95, "start": 70, "step": 4, "unit": "%", "interval": 5,
+      "description": "Relative humidity under the roof." }
+  ]
 }

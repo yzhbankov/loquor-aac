@@ -22,6 +22,7 @@ DEFAULT_MODEL = "qwen2.5:3b"
 DEFAULT_TRANSPORT = "localhost"
 DEFAULT_BEACON_INTERVAL = 10.0
 WIRE_LEVELS = ("off", "no-handshake", "all")
+REASONER_BACKENDS = ("ollama", "openai")
 
 
 def loquor_home() -> Path:
@@ -41,8 +42,11 @@ def run_dir() -> Path:
 class Settings:
     transport: str = DEFAULT_TRANSPORT  # localhost | wifi | bluetooth
     interface: str | None = None  # wifi: local IP of the interface to use
-    model: str = DEFAULT_MODEL  # Ollama model for every agent on this device
+    model: str = DEFAULT_MODEL  # the model every agent on this device uses
+    reasoner: str = "ollama"  # ollama | openai (an OpenAI-compatible server: llama.cpp, LM Studio, vLLM)
     ollama_url: str = "http://localhost:11434"
+    openai_url: str = "http://localhost:8080/v1"
+    api_key: str | None = None  # for an openai server that wants one; LOQUOR_API_KEY works too
     beacon_interval: float = DEFAULT_BEACON_INTERVAL
     wire: str = "off"  # envelope log: off | no-handshake | all
     trace: bool = True  # record every LLM call to run/<agent>.trace.jsonl
@@ -100,6 +104,13 @@ class Settings:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def shown(self) -> dict[str, Any]:
+        """``to_dict`` with the API key masked, for printing."""
+        data = self.to_dict()
+        if data.get("api_key"):
+            data["api_key"] = "***"
+        return data
+
 
 def _coerce(key: str, value: Any) -> Any:
     if key == "transport":
@@ -108,9 +119,13 @@ def _coerce(key: str, value: Any) -> Any:
         if value not in TRANSPORTS:
             raise ValueError(f"transport must be one of {', '.join(TRANSPORTS)}, not {value!r}")
         return value
-    if key == "interface":
+    if key in ("interface", "api_key"):
         return None if value in (None, "", "null", "none") else str(value)
-    if key in ("model", "ollama_url"):
+    if key == "reasoner":
+        if value not in REASONER_BACKENDS:
+            raise ValueError(f"reasoner must be one of {', '.join(REASONER_BACKENDS)}, not {value!r}")
+        return value
+    if key in ("model", "ollama_url", "openai_url"):
         if not isinstance(value, str) or not value:
             raise ValueError(f"{key} must be a non-empty string")
         return value

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loquor-aac"
-version = "0.5.0"
+version = "0.6.0"
 description = "loquor — AI agents on separate devices that discover each other and work together offline, over Wi-Fi or Bluetooth"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,6 +28,10 @@ dev = [
 ble = [
     "bleak>=0.22",
     "bless>=0.2.6",
+]
+hw = [
+    "gpiozero>=2.0",
+    "pyserial>=3.5",
 ]
 
 [tool.setuptools.packages.find]

@@ -21,13 +21,13 @@ WIDTH = 58
 class FancyPrint(Trigger):
     name = "show_outfit"
     description = (
-        "Show the person an outfit card: tomorrow's forecast in one line and the "
+        "Show the person an outfit card: today's weather in one line and the "
         "list of clothes to wear. Use it once the recommendation is final."
     )
     input_schema = {
         "type": "object",
         "properties": {
-            "forecast": {"type": "string", "description": "the forecast in one short line"},
+            "forecast": {"type": "string", "description": "the weather in one short line"},
             "items": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                       "description": "clothes to wear, one per entry"},
             "note": {"type": "string", "description": "optional one-line tip"},
@@ -35,11 +35,8 @@ class FancyPrint(Trigger):
         "required": ["forecast", "items"],
     }
 
-    def __init__(self, name: str = "show_outfit"):
-        self.name = name
-
     async def fire(self, input):
-        lines = ["👕  OUTFIT FOR TOMORROW", ""]
+        lines = ["👕  OUTFIT FOR TODAY", ""]
         lines += textwrap.wrap(f"🌤   {input['forecast']}", WIDTH - 4)
         lines.append("")
         for item in input["items"]:

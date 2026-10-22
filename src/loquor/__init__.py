@@ -13,7 +13,7 @@ from loquor.reasoning import Reasoner
 from loquor.sensors import Reading, Sensor
 from loquor.triggers import Trigger, TriggerError
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "Agent",

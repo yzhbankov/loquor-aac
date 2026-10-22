@@ -5,13 +5,14 @@
 #   ./install.sh --transport wifi      ...and set this device's transport
 #   ./install.sh --model qwen2.5:1.5b  ...with a specific model
 #   ./install.sh --node                a sensor node: no Ollama, no model (a Pi Zero is enough)
+#   ./install.sh --hw                  ...and the GPIO and serial libraries (gpio, serial drivers)
 #   ./install.sh --ble-le-mode         ...and put BlueZ in LE-only mode (Linux, needs sudo)
 #   ./install.sh --service agent.json  ...and start that agent at boot
 #
 # Safe to run again: every step checks before it acts. Run it from the repo root.
 #
 # Flags: --model NAME  --transport localhost|wifi|bluetooth  --node (= --no-ollama)  --no-model
-#        --no-ble  --ble-le-mode  --service PROFILE  --yes (never ask)  --help
+#        --hw  --no-ble  --ble-le-mode  --service PROFILE  --yes (never ask)  --help
 
 set -euo pipefail
 
@@ -20,6 +21,7 @@ TRANSPORT=""
 WANT_OLLAMA=1
 WANT_MODEL=1
 WANT_BLE=1
+WANT_HW=0
 LE_MODE=0
 SERVICE=""
 ASSUME_YES=0
@@ -31,10 +33,11 @@ while [ $# -gt 0 ]; do
     --no-ollama|--node) WANT_OLLAMA=0; WANT_MODEL=0; shift ;;
     --no-model) WANT_MODEL=0; shift ;;
     --no-ble) WANT_BLE=0; shift ;;
+    --hw) WANT_HW=1; shift ;;
     --ble-le-mode) LE_MODE=1; shift ;;
     --service) SERVICE="$2"; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
-    --help|-h) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)"; exit 2 ;;
   esac
 done
@@ -137,6 +140,13 @@ if [ "$WANT_BLE" -eq 1 ]; then
 else
   .venv/bin/python -m pip install --quiet -e "."
   ok "installed loquor (no Bluetooth libraries; add them later with: .venv/bin/pip install -e '.[ble]')"
+fi
+if [ "$WANT_HW" -eq 1 ]; then
+  if .venv/bin/python -m pip install --quiet -e ".[hw]"; then
+    ok "installed the GPIO and serial libraries (gpiozero, pyserial)"
+  else
+    note "gpiozero/pyserial failed to install; the gpio and serial drivers will say so when used"
+  fi
 fi
 LOQUOR=".venv/bin/loquor"
 
@@ -247,9 +257,9 @@ cat <<EOF
 
 Done. Next:
   source .venv/bin/activate
-  loquor init my_node --node         # a sensor node: measures and reports, no LLM
-  loquor init my_agent               # a working agent to start from
+  loquor init my_node --node         # a node: sensors and triggers, no LLM
+  loquor init my_agent               # an agent: the same plus a brain
   loquor check my_agent/agent.json   # build it, read its sensors, check the model
   loquor run   my_agent/agent.json   # on the air
-  loquor run demo/weather_and_clothes/weather_agent.json    # or a demo (see README)
+  # or a demo: demo/README.md (the smallest is demo/garden)
 EOF

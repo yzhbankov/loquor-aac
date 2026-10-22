@@ -24,7 +24,7 @@ Loquor's premise is the opposite:
 
 ## Why it matters
 
-Two independent intelligences with separate knowledge performing a coordinated task is qualitatively different from one model answering a question. Each agent contributes what only it knows (its sensors, its records, its history) and what only it can do (take a local measurement, actuate something). The collaboration should produce results neither device could produce alone — and that is measurable (see Test 3 in the [PoC plan](POC_PLAN.md)).
+Two independent intelligences with separate knowledge performing a coordinated task is qualitatively different from one model answering a question. Each agent contributes what only it knows (its sensors, its records, its history) and what only it can do (take a local measurement, actuate something). The collaboration should produce results neither device could produce alone — and that is measurable (see Test 3 in the [PoC plan](history/POC_PLAN.md)).
 
 ## Semantic grounding
 

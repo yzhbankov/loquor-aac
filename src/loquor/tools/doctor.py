@@ -40,7 +40,9 @@ class Check:
 
 async def run_checks(settings: Settings, *, transport: str | None = None, llm: bool = True) -> list[Check]:
     checks = [check_python(), check_package(), *check_dependencies(), check_home(), check_config()]
-    if llm and settings.llm:
+    if llm and settings.llm and settings.reasoner == "openai":
+        checks += await check_openai(settings)
+    elif llm and settings.llm:
         checks += await check_ollama(settings)
     elif llm:
         checks.append(Check("ollama", OK, "not needed: this device is a sensor node (llm false in the device config)"))
@@ -98,7 +100,7 @@ def check_config() -> Check:
         s = Settings.load(path)
     except ValueError as exc:
         return Check("device config", FAIL, str(exc), f"fix or delete {path}")
-    role = f"model {s.model}" if s.llm else "sensor node, no LLM"
+    role = f"model {s.model} ({s.reasoner})" if s.llm else "sensor node, no LLM"
     return Check("device config", OK, f"transport {s.transport}, {role}, beacons every {s.beacon_interval:g} s")
 
 
@@ -119,6 +121,20 @@ async def check_ollama(settings: Settings) -> list[Check]:
     if ram and need and ram < need:
         checks.append(Check("memory", WARN, f"{ram:.0f} GB RAM; {settings.model} wants about {need:g} GB",
                             "loquor config set model qwen2.5:1.5b   # or qwen2.5:0.5b on small boards"))
+    return checks
+
+
+async def check_openai(settings: Settings) -> list[Check]:
+    from loquor.reasoning.openai import openai_models  # noqa: PLC0415
+
+    models = await openai_models(settings.openai_url, settings.api_key)
+    if models is None:
+        return [Check("llm server", FAIL, f"no OpenAI-compatible server at {settings.openai_url}",
+                      "start it (llama-server -m model.gguf --port 8080), or: loquor config set openai_url http://host:port/v1")]
+    checks = [Check("llm server", OK, f"reachable at {settings.openai_url}: {', '.join(models) or 'no models listed'}")]
+    if models and settings.model not in models:
+        checks.append(Check(f"model {settings.model}", WARN, f"not listed (the server has {', '.join(models)})",
+                            f"loquor config set model {models[0]}   # llama.cpp answers under any name"))
     return checks
 
 

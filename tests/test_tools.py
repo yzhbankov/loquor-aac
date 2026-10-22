@@ -206,7 +206,7 @@ async def test_init_writes_a_runnable_agent(tmp_path):
     assert [p.name for p in written] == ["agent.json", "prompt.txt", "sensors.py", "triggers.py", "README.md"]
     profile = tmp_path / "farm_bot" / "agent.json"
     data = json.loads(profile.read_text())
-    assert data["name"] == "Farm Bot" and data["skills"][0]["capability"] == "farm_bot_status"
+    assert data["name"] == "Farm Bot" and data["brain"] == {"prompt_file": "prompt.txt"} and "skills" not in data
     lines, checks = await check_profile(profile, Settings(), llm=False, transport="localhost")
     assert all(c.ok for c in checks), [c for c in checks if not c.ok]
     assert any("load: " in c.detail for c in checks) and any("temperature: " in c.detail for c in checks)

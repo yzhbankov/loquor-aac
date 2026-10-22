@@ -15,6 +15,11 @@ Rules for a trigger:
 5. Import nothing from loquor but this module. A trigger knows nothing about
    agents, peers or LLMs.
 
+A class sets its contract as class attributes; the profile may override
+``name``, ``description`` and ``input_schema`` per instance, with no
+``__init__`` to write. A class that takes its own arguments (a pin, a URL)
+defines ``__init__`` and passes the rest on: ``super().__init__(**fields)``.
+
 A plain function works too::
 
     async def beep(input):            # or a sync def
@@ -38,6 +43,16 @@ class Trigger:
     name: str = ""
     description: str = ""  # what it does and when to use it; the LLM reads this
     input_schema: dict[str, Any] = {"type": "object"}
+
+    def __init__(self, *, name: str | None = None, description: str | None = None,
+                 input_schema: dict[str, Any] | None = None):
+        """The profile's per-instance overrides of the class attributes."""
+        if name is not None:
+            self.name = name
+        if description is not None:
+            self.description = description
+        if input_schema is not None:
+            self.input_schema = input_schema
 
     async def fire(self, input: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError

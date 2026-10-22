@@ -60,6 +60,7 @@ MessageHandler = Callable[[Peer, dict[str, Any]], Awaitable[None]]
 TypeHandler = Callable[[Envelope, Peer, Address], Awaitable[None]]
 PeerHandler = Callable[[Peer], Awaitable[None]]
 OverheardHandler = Callable[[Envelope], None]
+LostHandler = Callable[[Peer], None]
 
 
 class Node:
@@ -90,6 +91,7 @@ class Node:
         self._type_handlers: dict[int, TypeHandler] = {}
         self._peer_handlers: list[PeerHandler] = []
         self._overheard_handlers: list[OverheardHandler] = []
+        self._lost_handlers: list[LostHandler] = []
         self._acks: dict[bytes, asyncio.Future[None]] = {}
         self._hello_at: dict[bytes, float] = {}  # prefix -> when we last HELLO'd it
         self._heard_at: dict[bytes, Address] = {}  # prefix -> where its beacon came from
@@ -121,6 +123,10 @@ class Node:
     def on_peer(self, handler: PeerHandler) -> None:
         """Called with the peer after every HELLO / HELLO_ACK (trust, relay)."""
         self._peer_handlers.append(handler)
+
+    def on_lost(self, handler: LostHandler) -> None:
+        """Called with the peer when it is dropped after three silent beacon intervals."""
+        self._lost_handlers.append(handler)
 
     def on_overheard(self, handler: OverheardHandler) -> None:
         """Called with valid-looking envelopes addressed to someone else (relays)."""
@@ -329,6 +335,8 @@ class Node:
             for peer in self.peers.prune():
                 self.keys.pop(peer.agent_id, None)
                 log.info("%s lost %s (silent for %.0fs)", self.label, peer.label, self.peers.ttl)
+                for handler in self._lost_handlers:
+                    handler(peer)
             await asyncio.sleep(self.beacon_interval)
 
 

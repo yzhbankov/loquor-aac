@@ -57,6 +57,10 @@ class TriggerHub:
     def names(self) -> list[str]:
         return list(self._triggers)
 
+    def local_names(self) -> list[str]:
+        """This device's own triggers, without the peers' mirrored here."""
+        return [n for n, t in self._triggers.items() if not getattr(t, "remote", False)]
+
     def add(self, trigger: Trigger) -> None:
         """Register a trigger at runtime (a peer's, discovered on the mesh)."""
         if not trigger.name:
@@ -102,22 +106,24 @@ class TriggerHub:
         names = [n for n in (allowed if allowed is not None else self.names()) if n in self._triggers]
         if not names:
             return Proposal(None, reason="no triggers available")
+        # "reason" comes first: a small model that writes its reason before choosing chooses better
         schema: dict[str, Any] = {
             "type": "object",
             "properties": {
-                "trigger": {"type": ["string", "null"], "enum": [*names, None]},
-                "input": {"type": "object"},
                 "reason": {"type": "string"},
+                "trigger": {"type": ["string", "null"], "enum": [*names, "none", None]},
+                "input": {"type": "object"},
             },
-            "required": ["trigger", "input", "reason"],
+            "required": ["reason", "trigger", "input"],
         }
         if len(names) == 1:  # the model can be held to the exact input schema
             schema["properties"]["input"] = self._triggers[names[0]].input_schema
         prompt = (
             f"{situation}\n\nAvailable triggers:\n{self.describe(names)}\n\n"
-            'Reply in JSON with keys: "trigger" (one of the trigger names, or null to do nothing), '
-            '"input" (an object matching that trigger\'s input schema), '
-            '"reason" (one sentence).'
+            'Reply in JSON with keys, in this order: "reason" (one sentence: what in the situation calls for '
+            'an action, or why nothing does), '
+            '"trigger" (the trigger that action needs, or "none" to do nothing), '
+            '"input" (an object matching that trigger\'s input schema).'
         )
         raw = await self.reasoner.complete(system, prompt, temperature=temperature, schema=schema)
         try:

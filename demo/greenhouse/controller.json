@@ -1,18 +1,19 @@
 {
   "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
   "name": "Greenhouse Controller",
-  "description": "I run the greenhouse: I collect readings from the sensor nodes, water the beds through the tank node's valve and open the roof vent.",
-  "system_prompt_file": "controller_prompt.txt",
+  "description": "I run the greenhouse: I read the sensor nodes, water the beds through the tank node's valve and open the roof vent.",
   "triggers": [
-    { "type": "actuators.py:Vent" }
+    { "type": "console", "name": "vent",
+      "description": "Open or close the roof vent. Open it when the air is too hot; close it when it has cooled.",
+      "input_schema": { "type": "object", "properties": { "open": { "type": "boolean" } }, "required": ["open"] },
+      "template": "\n🌬   VENT open={open}\n" }
   ],
-  "skills": [
-    {
-      "type": "collect",
-      "interval": 15,
-      "goal": "Keep the plants healthy: soil moisture above 30 %, air below 35 °C. Water through the tank node's valve, and only if the tank has more than 10 % left. Act only when a reading calls for it.",
-      "triggers": ["vent"],
-      "temperature": 0
-    }
-  ]
+  "brain": {
+    "prompt_file": "controller_prompt.txt",
+    "goal": "Keep the plants healthy: soil moisture above 30 %, air below 35 °C. Water through the tank node's valve, and only if the tank has more than 10 % left. Act only when a reading calls for it.",
+    "every": 15,
+    "min_peers": 3,
+    "act": ["vent", "tank-node:valve"],
+    "temperature": 0
+  }
 }

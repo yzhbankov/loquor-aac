@@ -3,7 +3,10 @@
     loquor doctor                       is this device ready? (python, ollama, model, radio)
     loquor init my_agent                a working agent to start from
     loquor check my_agent/agent.json    build it, read its sensors, check the model — nothing on the air
+    loquor read  my_agent/agent.json    read its sensors once (or the ones named)
+    loquor fire  my_agent/agent.json relay '{"on": true}'   fire one trigger by hand
     loquor run   my_agent/agent.json    run it (Ctrl-C to stop)
+    loquor ask "Gardener" "Do the beds need water?"   ask an agent in range; no question = a node's readings
     loquor status                       what the running agents see, read and decided
     loquor trace "My Agent"             every LLM call of the last run
     loquor config show|set|path         this device's transport, model, beacon interval, logging
@@ -31,7 +34,7 @@ from loquor.settings import WIRE_LEVELS, Settings, config_path
 from loquor.transports import TRANSPORTS
 
 HANDSHAKE_TYPES = ("HELLO", "HELLO_ACK", "ACK")
-COMMANDS = ("run", "check", "doctor", "init", "status", "trace", "config", "service", "version")
+COMMANDS = ("run", "check", "read", "fire", "ask", "doctor", "init", "status", "trace", "config", "service", "version")
 
 
 # ------------------------------------------------------------------ run
@@ -39,7 +42,7 @@ COMMANDS = ("run", "check", "doctor", "init", "status", "trace", "config", "serv
 
 async def run(args: argparse.Namespace) -> None:
     from loquor.config import build_agent, load_profile  # noqa: PLC0415
-    from loquor.reasoning import OllamaReasoner, TracingReasoner, ollama_available  # noqa: PLC0415
+    from loquor.reasoning import TracingReasoner, reasoner_problem  # noqa: PLC0415
     from loquor.tools.status import StatusWriter, trace_path  # noqa: PLC0415
 
     # Ctrl-C, `kill` or a closed terminal cancel this task, so every `finally`
@@ -60,16 +63,17 @@ async def run(args: argparse.Namespace) -> None:
         **_overrides(args),
     )
     reasoner = getattr(agent.reasoner, "inner", agent.reasoner)
-    if isinstance(reasoner, OllamaReasoner) and not settings.llm:
+    if reasoner.name in ("ollama", "openai") and not settings.llm:
         sys.exit(
             f"loquor: this device is configured as a sensor node (llm false), but {Path(args.profile).name} "
-            "needs an LLM. Run it on a device with Ollama, or `loquor config set llm true` and install Ollama here."
+            "has a brain and needs an LLM. Run it on a device with one, or `loquor config set llm true` and install one here."
         )
-    if isinstance(reasoner, OllamaReasoner) and not await ollama_available(reasoner.base_url, model=reasoner.model):
+    problem = await reasoner_problem(reasoner)
+    if problem:
+        what, detail, fix = problem
         sys.exit(
-            f"loquor: model {reasoner.model!r} is not available in Ollama at {reasoner.base_url}.\n"
-            f"  Start Ollama and `ollama pull {reasoner.model}`, choose another with --model or "
-            f"`loquor config set model <name>`, or run `loquor doctor` to see what is missing."
+            f"loquor: {what}: {detail}.\n  fix: {fix}\n"
+            f"  Or choose another model with --model or `loquor config set model <name>`; `loquor doctor` shows what is missing."
         )
 
     await agent.start()
@@ -118,6 +122,96 @@ def check(args: argparse.Namespace) -> int:
         print("\n".join(lines), end="\n\n")
     print(format_checks(checks))
     return 0 if all(c.ok for c in checks) else 1
+
+
+# ------------------------------------------------------------ read, fire
+
+
+def _bench_agent(profile_path: str):
+    """The profile's parts, built but not on the air: for trying sensors and triggers by hand."""
+    from loquor.config import build_agent, load_profile  # noqa: PLC0415
+
+    path = Path(profile_path)
+    return build_agent(load_profile(path), base_dir=path.resolve().parent, settings=Settings.load(), transport="localhost")
+
+
+def read(args: argparse.Namespace) -> int:
+    agent = _bench_agent(args.profile)
+    names = args.sensors or agent.sensors.names()
+    unknown = [n for n in names if n not in agent.sensors]
+    if unknown:
+        print(f"loquor: no sensor {', '.join(unknown)}; have {', '.join(agent.sensors.names()) or 'none'}")
+        return 1
+    if not names:
+        print("loquor: this profile has no sensors")
+        return 1
+
+    async def read_all():
+        return [await agent.sensors.read(n) for n in names]
+
+    readings = asyncio.run(read_all())
+    if args.json:
+        print(json.dumps({r.sensor: r.to_dict() for r in readings}, indent=2, ensure_ascii=False, default=str))
+    else:
+        for r in readings:
+            print(r.text().replace(" (0 s ago)", ""))
+    return 0 if all(r.ok for r in readings) else 1
+
+
+def fire(args: argparse.Namespace) -> int:
+    from loquor.triggers import TriggerError  # noqa: PLC0415
+
+    agent = _bench_agent(args.profile)
+    if args.trigger not in agent.triggers:
+        print(f"loquor: no trigger {args.trigger!r}; have {', '.join(agent.triggers.names()) or 'none'}")
+        return 1
+    try:
+        data = json.loads(args.input) if args.input else {}
+    except ValueError as exc:
+        print(f"loquor: input is not JSON: {exc}")
+        return 2
+    if not isinstance(data, dict):
+        print("loquor: input must be a JSON object, like '{\"on\": true}'")
+        return 2
+    trigger = agent.triggers.get(args.trigger)
+    try:
+        result = asyncio.run(agent.triggers.fire(args.trigger, data))
+    except TriggerError as exc:
+        print(f"loquor: {exc}\n  {args.trigger} takes: {json.dumps(trigger.input_schema)}")
+        return 1
+    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
+def ask(args: argparse.Namespace) -> int:
+    from loquor.agent.tracker import RequestError  # noqa: PLC0415
+    from loquor.sensors import describe_readings  # noqa: PLC0415
+    from loquor.tools.ask import ask as ask_peer  # noqa: PLC0415
+    from loquor.transports import make_transport  # noqa: PLC0415
+
+    settings = Settings.load()
+    name = args.transport or settings.transport
+    interface = args.interface or (settings.interface if name == "wifi" else None)
+    transport = make_transport(name, interface=interface)
+    print(f"listening on {name} for {args.target!r}…", file=sys.stderr, flush=True)
+    try:
+        got = asyncio.run(ask_peer(args.target, args.question, transport, timeout=args.timeout))
+    except (LookupError, TimeoutError) as exc:
+        print(f"loquor: {exc}")
+        return 1
+    except RequestError as exc:  # the peer answered with an error
+        print(f"loquor: {args.target!r} refused: {exc}")
+        return 1
+    output = got["output"]
+    if args.json:
+        print(json.dumps(output, indent=2, ensure_ascii=False, default=str))
+    elif "answer" in output:
+        print(f"{got['peer'].name}: {output['answer']}")
+    elif isinstance(output.get("readings"), dict):
+        print(f"{got['peer'].name}: {describe_readings(output['readings'])}")
+    else:
+        print(json.dumps(output, indent=2, ensure_ascii=False, default=str))
+    return 0
 
 
 # --------------------------------------------------------------- doctor
@@ -237,7 +331,7 @@ def config(args: argparse.Namespace) -> int:
         return 1
     if args.action == "show":
         state = "" if config_path().exists() else f"   (defaults; nothing saved yet at {config_path()})"
-        print(json.dumps(settings.to_dict(), indent=2) + state)
+        print(json.dumps(settings.shown(), indent=2) + state)
         return 0
     if args.action == "set":
         if len(args.pairs) % 2:
@@ -250,7 +344,7 @@ def config(args: argparse.Namespace) -> int:
             print(f"loquor: {exc}")
             return 2
         path = settings.save()
-        print(json.dumps(settings.to_dict(), indent=2) + f"\nsaved to {path}")
+        print(json.dumps(settings.shown(), indent=2) + f"\nsaved to {path}")
         return 0
     if args.action == "reset":
         if config_path().exists():
@@ -315,7 +409,7 @@ def main(argv: list[str] | None = None) -> None:
             _setup_logging(args)
             asyncio.run(run(args))
             return
-        code = {"check": check, "doctor": doctor, "init": init, "status": status, "trace": trace,
+        code = {"check": check, "read": read, "fire": fire, "ask": ask, "doctor": doctor, "init": init, "status": status, "trace": trace,
                 "config": config, "service": service}[args.command](args)
         if code:
             sys.exit(code)
@@ -333,7 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
     def overrides(p: argparse.ArgumentParser) -> None:
         p.add_argument("--transport", choices=TRANSPORTS, help="override the device config and the profile")
         p.add_argument("--interface", help="wifi: local IP of the network interface to use")
-        p.add_argument("--model", help="override the Ollama model")
+        p.add_argument("--model", help="override the model")
         p.add_argument("--visibility", choices=[v.value for v in Visibility], help="override the profile's visibility")
         p.add_argument("--beacon-interval", type=float, help="seconds between beacons (device config, else 10)")
 
@@ -349,6 +443,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("profile")
     overrides(p)
     p.add_argument("--no-llm", action="store_true", help="skip the Ollama and model checks")
+
+    p = sub.add_parser("read", help="read a profile's sensors once, without going on the air")
+    p.add_argument("profile")
+    p.add_argument("sensors", nargs="*", help="only these sensors (default: all)")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("fire", help="fire one of a profile's triggers by hand, without going on the air")
+    p.add_argument("profile")
+    p.add_argument("trigger")
+    p.add_argument("input", nargs="?", help="the input as JSON, e.g. '{\"on\": true}' (default: {})")
+
+    p = sub.add_parser("ask", help="ask an agent in range a question, or a node for its readings")
+    p.add_argument("target", help="the agent's or node's name (or id prefix)")
+    p.add_argument("question", nargs="?", help="leave out to get the readings it shares")
+    p.add_argument("--transport", choices=TRANSPORTS, help="default: the device config")
+    p.add_argument("--interface", help="wifi: local IP of the network interface to use")
+    p.add_argument("--timeout", type=float, default=30.0, help="seconds to wait for it to be heard and answer (default 30)")
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("doctor", help="check that this device can run an agent")
     p.add_argument("--transport", choices=TRANSPORTS, help="check this transport instead of the configured one")
@@ -372,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("config", help="this device's settings (~/.loquor/config.json)")
     p.add_argument("action", choices=("show", "set", "reset", "path"))
-    p.add_argument("pairs", nargs="*", metavar="KEY VALUE", help="for set: transport, interface, model, ollama_url, beacon_interval, wire, trace, llm")
+    p.add_argument("pairs", nargs="*", metavar="KEY VALUE", help="for set: transport, interface, model, reasoner, ollama_url, openai_url, api_key, beacon_interval, wire, trace, llm")
 
     p = sub.add_parser("service", help="run an agent at boot with systemd (Linux) or launchd (macOS)")
     p.add_argument("action", choices=("install", "uninstall"))

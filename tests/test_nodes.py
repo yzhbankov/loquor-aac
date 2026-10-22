@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from loquor import Agent, Identity, Reasoner, Trigger
-from loquor.agent.skills import Collect, SensorReport
-from loquor.config import build_agent, load_profile
+from loquor.agent.skills import Brain, Collect, SensorReport
+from loquor.config import build_agent, load_profile, skill_specs
 from loquor.reasoning import NoReasoner
 from loquor.sensors import FunctionSensor
 from loquor.settings import Settings
@@ -94,9 +94,10 @@ def test_demo_profiles_build_and_check(home):
     assert all(isinstance(n.reasoner, NoReasoner) for n in nodes)
     assert nodes[0].sensors.names() == ["soil_moisture", "soil_temperature"]
     controller = build_agent(load_profile(DEMO / "controller.json"), base_dir=DEMO, settings=Settings(model="m"))
-    (collect,) = controller.skills
-    assert isinstance(collect, Collect) and collect.triggers == ("vent",) and collect.needs_reasoner
-    assert "greenhouse" in collect.system_prompt and controller.triggers.names() == ["vent"]
+    (brain,) = controller.skills  # it shares nothing: no sensors, and an agent keeps its triggers
+    assert isinstance(brain, Brain) and brain.act == ("vent", "tank-node:valve") and brain.triggers == ("vent",)
+    assert brain.every == 15 and brain.min_peers == 3 and brain.needs_reasoner
+    assert "greenhouse" in brain.system_prompt and controller.triggers.names() == ["vent"]
     # the tank node offers its valve in its card; the controller will fire it remotely
     tank = nodes[2]
     (entry,) = [s for s in tank.card().skills if s["id"] == "fire_trigger"]
@@ -182,7 +183,8 @@ async def test_node_scaffold_doctor_and_settings(tmp_path, home):
     written = scaffold.init(tmp_path / "barn", node=True)
     assert [p.name for p in written] == ["agent.json", "sensors.py", "triggers.py", "README.md"]
     profile = json.loads((tmp_path / "barn" / "agent.json").read_text())
-    assert [s["type"] for s in profile["skills"]] == ["sensor_report", "offer_triggers"] and "prompt.txt" not in str(written)
+    assert "skills" not in profile and "brain" not in profile and "prompt.txt" not in str(written)
+    assert [s["type"] for s in skill_specs(profile)] == ["sensor_report", "offer_triggers"]
     lines, checks = await check_profile(tmp_path / "barn" / "agent.json", Settings(), transport="localhost")
     assert all(c.ok for c in checks) and any("node (no LLM)" in line for line in lines)
 

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://raw.githubusercontent.com/yzhbankov/loquor-aac/master/src/loquor/profile.schema.json",
+  "name": "Weather Station",
+  "description": "I am a weather station. I measure the weather outside: temperature, condition and wind.",
+  "sensors": [
+    { "type": "weather_sensor.py:RandomWeather", "interval": 5 }
+  ]
+}

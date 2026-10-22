@@ -42,6 +42,14 @@ class Context:
         """This agent's triggers: ``propose()`` (ask the LLM) and ``fire()``."""
         return self._agent.triggers
 
+    def remote_sensors(self) -> dict[str, Peer]:
+        """Peers' sensors mirrored into ``sensors``: hub name (``node:sensor``) -> peer."""
+        return dict(self._agent.remote_sensors)
+
+    def remote_triggers(self) -> dict[str, Peer]:
+        """Peers' triggers mirrored into ``triggers``: hub name (``node:trigger``) -> peer."""
+        return dict(self._agent.remote_triggers)
+
     def peers(self, capability: str | None = None) -> list[Peer]:
         """Handshaken peers, optionally only those with a capability."""
         return self._agent.node.peers.find(capability)

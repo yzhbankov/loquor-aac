@@ -1,8 +1,8 @@
 """The triage demo end to end over the memory transport, with a scripted LLM.
 
-Three chairs (sensor + llm_answer) describe their patients; the nurse
-(goal with min_answers=3 + the triage_board trigger) asks all of them,
-concludes, and lets its LLM fill the board — validated against the
+Three chairs (sensor + a brain that answers) describe their patients; the
+nurse (a brain with a goal, min_peers=3 and the triage_board trigger)
+asks all of them and lets its LLM fill the board — validated against the
 trigger's schema before it is shown.
 """
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from loquor import Agent, Identity, Reasoner
-from loquor.agent.skills import Goal, LlmAnswer
+from loquor.agent.skills import Brain
 from loquor.config import build_agent, load_profile, resolve_type
 from loquor.transports import MemoryHub
 
@@ -40,7 +40,7 @@ class ScriptedClinician(Reasoner):
         if schema is not None:  # decision about a peer
             useful = "triage chair" in prompt.lower()
             return json.dumps({"useful": useful, "reason": "a chair with a patient" if useful else "no",
-                               "capability": "patient_status" if useful else "", "question": "Status?"})
+                               "capability": "ask" if useful else "", "question": "Status?"})
         if "asks:" in prompt:  # a chair answering, grounded in its sensor reading
             text = system.lower()
             assert "complaint=" in text  # the reading was placed at {sensors}
@@ -52,13 +52,13 @@ class ScriptedClinician(Reasoner):
 def chair(n, scenario, hub):
     return Agent(
         name=f"Triage Chair {n}", description="I am an automated triage chair.", identity=Identity.generate(),
-        skills=[LlmAnswer("patient_status", CHAIR_PROMPT, sensors=["patient"])], reasoner=ScriptedClinician(),
+        skills=[Brain(system_prompt=CHAIR_PROMPT)], reasoner=ScriptedClinician(),
         transport=hub.transport(), sensors=[PatientMonitor(scenario=scenario)], beacon_interval=0.05, request_timeout=3,
     )
 
 
 def nurse(hub, **goal_kwargs):
-    goal = Goal("Order the patients.", "You assist a nurse.", triggers=["triage_board"], **goal_kwargs)
+    goal = Brain(goal="Order the patients.", system_prompt="You assist a nurse.", act=["triage_board"], **goal_kwargs)
     agent = Agent(name="Triage Nurse", description="nurse", identity=Identity.generate(), skills=[goal],
                   reasoner=ScriptedClinician(), transport=hub.transport(), triggers=[TriageBoard()],
                   beacon_interval=0.05, request_timeout=3)
@@ -78,12 +78,12 @@ async def run_all(agents, goal, timeout=5):
 async def test_nurse_asks_every_chair_and_the_board_is_ordered(capsys):
     hub = MemoryHub()
     chairs = [chair(1, "chest_pain", hub), chair(2, "flu", hub), chair(3, "breathing", hub)]
-    agent, goal = nurse(hub, min_answers=3, settle=30)
+    agent, goal = nurse(hub, min_peers=3, settle=30)
     await run_all([*chairs, agent], goal)
 
     assert sorted(a["name"] for a in goal.result["answers"]) == ["Triage Chair 1", "Triage Chair 2", "Triage Chair 3"]
-    assert all(a["capability"] == "patient_status" for a in goal.result["answers"])
-    assert goal.result["outcome"].startswith("Chest pain first")
+    assert all(a["capability"] == "ask" for a in goal.result["answers"])
+    assert goal.result["outcome"].startswith("Chest pain first") and goal.rounds == 1
     fired = goal.result["triggered"]
     assert fired["trigger"] == "triage_board" and fired["result"] == {"patients": 3}
     assert [p["chair"] for p in fired["input"]["patients"]] == ["Triage Chair 1", "Triage Chair 3", "Triage Chair 2"]
@@ -95,7 +95,7 @@ async def test_nurse_asks_every_chair_and_the_board_is_ordered(capsys):
 async def test_nurse_settles_when_fewer_chairs_turn_up():
     hub = MemoryHub()
     chairs = [chair(1, "chest_pain", hub), chair(2, "sprain", hub)]
-    agent, goal = nurse(hub, min_answers=3, settle=0.3)
+    agent, goal = nurse(hub, min_peers=3, settle=0.3)
     await run_all([*chairs, agent], goal)
     assert len(goal.result["answers"]) == 2 and goal.result["triggered"]["result"] == {"patients": 2}
 
@@ -104,11 +104,11 @@ def test_profiles_build(tmp_path, monkeypatch):
     monkeypatch.setenv("LOQUOR_HOME", str(tmp_path))
     for name in ("chair_1", "chair_2", "chair_3"):
         agent = build_agent(load_profile(DEMO / f"{name}.json"), base_dir=DEMO)
-        assert agent.capabilities == ["patient_status", "sensor_report"] and agent.sensors.names() == ["patient"]
-        assert agent.skills[0].sensors == ("patient",) and "{sensors}" in agent.skills[0].system_prompt
+        assert agent.capabilities == ["ask", "sensor_report"] and agent.sensors.names() == ["patient"]
+        assert isinstance(agent.skills[0], Brain) and "{sensors}" in agent.skills[0].system_prompt
     agent = build_agent(load_profile(DEMO / "nurse_agent.json"), base_dir=DEMO)
     goal = agent.skills[0]
-    assert isinstance(goal, Goal) and goal.min_answers == 3 and goal.settle == 15 and goal.triggers == ("triage_board",)
+    assert isinstance(goal, Brain) and goal.min_peers == 3 and goal.settle == 15 and goal.act == ("triage_board",)
     assert agent.triggers.names() == ["triage_board"]
     with pytest.raises(ValueError, match="unknown scenario"):
         PatientMonitor(scenario="zombie")

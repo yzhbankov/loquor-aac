@@ -1,5 +1,7 @@
 # PoC Plan — "Two Machines, One Problem"
 
+*History: the plan the project started from, kept as written. What exists today is in [CONCEPTS.md](../CONCEPTS.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).*
+
 The goal is to demonstrate that two independent AI-powered devices can discover each other, exchange knowledge, and solve a problem together **without internet access, a central server, or knowing about each other in advance**. Built on two laptops first, not specialized hardware.
 
 ## 1. The scenario: two intelligent machines meet
@@ -55,7 +57,7 @@ result = await agent.ask(peer=peers[0], task="diagnose", data=sensor_observation
 
 ## 3. Technology selection
 
-| Component | Planned | Implemented (see [PROTOCOL.md](PROTOCOL.md)) |
+| Component | Planned | Implemented (see [PROTOCOL.md](../PROTOCOL.md)) |
 |---|---|---|
 | Hardware | Two laptops, ideally 16 GB RAM each | same |
 | Programming language | Python | Python 3.10+ |
@@ -123,4 +125,4 @@ The first milestone is two intelligences that discover and genuinely help each o
 
 ---
 
-*Implementation status: see [ARCHITECTURE.md](ARCHITECTURE.md) for what this repository already implements of this plan, and the [README](../README.md) roadmap for what's next.*
+*Implementation status: see [ARCHITECTURE.md](../ARCHITECTURE.md) for what this repository already implements of this plan, and the [README](../../README.md) roadmap for what's next.*

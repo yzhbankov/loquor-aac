@@ -6,263 +6,181 @@
 
 **loquor** — Latin for *"I speak"*. **aac** — agent-to-agent communication.
 
-AI agents on separate devices that find each other, talk securely and
-work together **without internet, cloud or server** — over the local
-radio they have: Wi-Fi or Bluetooth. Each device runs its own small LLM,
-has its own sensors and its own ways to act. Together they do what none
-of them could alone.
+Devices that find each other and work together **without internet, cloud
+or server**, over the local radio they have: Wi-Fi or Bluetooth.
 
-1. A device = an **agent**: a local LLM + what it can measure (**sensors**) + what it can do (**triggers**).
-2. Agents in range **discover each other, verify who they are, and ask each other questions**, encrypted, peer to peer.
-3. The LLM reasons over its own sensor data and the peers' answers, and **proposes an action**; the device checks the proposal and acts.
+A device is **sensors** (what it measures) + **triggers** (what it can do)
++ an optional **brain** (a local LLM with a prompt and a goal).
 
-Where this matters: a factory floor, a hospital waiting area, a farm, a
-convoy, a mine, a disaster zone — anywhere the network is unreliable or
-absent, and the devices that are physically there are the only ones that
-can act.
+- A device **without a brain is a node**: no LLM, a Raspberry Pi Zero is
+  enough. It shares its sensors and triggers with every agent in range.
+- A device **with a brain is an agent**. It reads its own sensors and the
+  nodes' — only when it needs them —, asks other agents, and fires
+  triggers, its own or a node's. The LLM only *proposes* an action; code
+  checks it against the trigger's schema before anything moves.
 
-## Get an agent running
+Everything is encrypted and signed, peer to peer. Where it matters: a
+farm, a factory floor, a hospital waiting area, a convoy, a disaster
+zone — anywhere the network is unreliable or absent.
 
-On a laptop, a Raspberry Pi, or any Linux or macOS device with Python 3.10:
+## Get running
+
+On a laptop, a Raspberry Pi or any Linux or macOS device with Python 3.10:
 
 ```bash
 git clone https://github.com/yzhbankov/loquor-aac.git && cd loquor-aac
-./install.sh                      # Python, the package, Ollama, a model sized for this device
+./install.sh                     # agent: Python, the package, Ollama, a model sized for this device
+./install.sh --node              # or a node: no Ollama, no model
 source .venv/bin/activate
-loquor init my_agent              # a working agent: profile, prompt, one sensor, one trigger
-loquor run my_agent/agent.json    # on the air; Ctrl-C to stop
 ```
 
-That is one agent. Do the same on a second device, then tell each which
-radio to use and they find each other — no pairing, no addresses:
+Then, on one computer, the smallest pair — a node and an agent:
 
 ```bash
-loquor config set transport wifi         # same Wi-Fi or a phone hotspot (no internet needed)
-loquor config set transport bluetooth    # or no network at all
+loquor run demo/garden/soil_node.json            # terminal 1: a node, no LLM
+loquor run demo/garden/gardener.json             # terminal 2: an agent with a brain
+loquor ask Gardener "Do the beds need water?"    # terminal 3
 ```
 
-Not every device needs a brain. A **sensor node** only measures and
-reports — no LLM, no Ollama, a Raspberry Pi Zero is enough — and any
-agent in range pulls its readings as data:
+```
+Gardener: The beds need water as the soil moisture is currently at 18.6%, which is below the threshold of 30%.
+```
+
+The gardener read the node's sensor at the moment you asked, not before.
+On two devices: `loquor config set transport wifi` (same Wi-Fi or a phone
+hotspot, no internet needed) or `bluetooth` (no network at all) on both.
+Every install step, per OS: [docs/INSTALL.md](docs/INSTALL.md).
+
+## Make your own
 
 ```bash
-./install.sh --node                      # on the small device: no Ollama, no model
-loquor init my_node --node               # sensors + sensor_report, nothing else
-loquor run my_node/agent.json
+loquor init my_node --node       # a node: agent.json, sensors.py, triggers.py
+loquor init my_agent             # an agent: the same plus prompt.txt and a brain
 ```
 
-What you will see, from the second device's agent:
-
-```
-my-agent-3d42fca5 | id 3d42fca5… | model qwen2.5:3b (ollama) | transport wifi (192.168.1.20) | visible | Ctrl-C to stop
-status: loquor status "My Agent" · trace: ~/.loquor/run/my-agent.trace.jsonl
-12:00:03  my-agent-3d42fca5 met greenhouse-6b2a6c20: I am Greenhouse. I report… ['greenhouse_status', 'sensor_report']
-12:00:04  greenhouse-6b2a6c20 asks for my_agent_status: What is the load and temperature at your device?
-12:00:06  LLM  1.8 s  "Another agent asks: What is the load…" -> "Load is 0.4 and it is 21.3 °C here."
-12:00:06  my-agent-3d42fca5: answered greenhouse-6b2a6c20: Load is 0.4 and it is 21.3 °C here.
-```
-
-Every step in detail, per OS, with the Bluetooth prerequisites and how
-to run at boot: [docs/INSTALL.md](docs/INSTALL.md).
-
-## Make it yours
-
-The folder `loquor init` wrote is the whole agent. Three ways to give it
-your own sensors and triggers, by rising effort:
-
-**1. A shell command, no Python.** Anything with a CLI is a sensor or a
-trigger. In `agent.json`:
+A **node** is a name, a description, sensors and triggers:
 
 ```json
-"sensors":  [ { "type": "command", "name": "cpu_temp", "command": "vcgencmd measure_temp | tr -dc '0-9.'", "unit": "°C", "interval": 10 } ],
-"triggers": [ { "type": "command", "name": "beep", "command": "aplay /usr/share/sounds/beep.wav",
-                "description": "Sound the buzzer once.", "input_schema": { "type": "object" } } ]
+{
+  "name": "Tank Node",
+  "description": "I measure the irrigation tank and can open its valve.",
+  "sensors":  [ { "type": "file", "name": "water_level", "path": "/sys/bus/iio/devices/iio:device0/in_voltage0_raw",
+                  "scale": 0.0244, "unit": "%", "interval": 5 } ],
+  "triggers": [ { "type": "gpio", "name": "valve", "pin": 17, "description": "Open the irrigation valve." } ]
+}
 ```
 
-**2. A function.** The value it returns is the reading; its docstring is
-what the LLM reads:
-
-```python
-def soil_moisture():
-    """Soil moisture at the north bed, in percent."""
-    return read_adc(channel=0) / 40.95
-```
+An **agent** adds a brain — a prompt, and a goal if it should act on its own:
 
 ```json
-{ "type": "sensors.py:soil_moisture", "name": "soil", "unit": "%", "interval": 60 }
+{
+  "name": "Greenhouse Controller",
+  "description": "I run the greenhouse.",
+  "brain": {
+    "prompt_file": "prompt.txt",
+    "goal": "Keep soil moisture above 30 %; water through the tank's valve only if it has water.",
+    "every": 30,
+    "act": ["tank-node:valve"]
+  }
+}
 ```
 
-**3. A class**, when the device needs opening, state or a push loop. One
-method each:
+It sees the node's sensor as `tank-node:water_level` and its valve as
+`tank-node:valve`, reads one when its brain needs it and fires the other
+when the brain decides to.
 
-```python
-from loquor import Sensor, Trigger
+**Sensors and triggers** need no Python for most devices: built-in
+`file` (sysfs, 1-wire), `command`, `http`, `gpio` and `serial` drivers,
+one line of JSON each — recipes in [docs/HARDWARE.md](docs/HARDWARE.md).
+Otherwise a function (its return value is the reading) or a small class.
 
-class Thermometer(Sensor):                      # UART, I²C, GPIO, HTTP… your call
-    name, unit, interval = "thermometer", "°C", 10
-    async def read(self):
-        return self.reading(await read_my_device())
+**The brain's model** is a device setting, so one profile runs on a
+laptop and a Pi: `loquor config set model qwen2.5:1.5b`. Ollama by
+default; llama.cpp, LM Studio or vLLM with
+`loquor config set reasoner openai`.
 
-class Pump(Trigger):
-    name = "pump"
-    description = "Switch the irrigation pump on or off."      # the LLM reads this
-    input_schema = {"type": "object", "properties": {"on": {"type": "boolean"}}, "required": ["on"]}
-    async def fire(self, input):                                 # input already validated
-        await set_relay(input["on"])
-        return {"on": input["on"]}
-```
+The whole model on one page: [docs/CONCEPTS.md](docs/CONCEPTS.md).
 
-`loquor check my_agent/agent.json` loads it all, reads every sensor
-once and tells you what is wrong before anything goes on the air.
-
-**Two roles.** Put an LLM where a decision is made; put a **node** where
-something is measured or switched. A node is a profile with sensors, the
-`sensor_report` skill and, if it can act, triggers plus `offer_triggers`:
-it runs the same protocol (beacons, handshake, encryption), answers with
-numbers, not prose, and advertises its triggers in its capability card.
-An agent with the `collect` skill pulls every node's readings each round,
-reasons over the table once, and fires a trigger if the readings call
-for it — its own, or one on a node (`tank-node:valve`), validated on both
-sides:
-
-```json
-{ "type": "collect", "interval": 30,
-  "goal": "Keep soil moisture above 30 %; water through the tank node's valve, only if the tank is above 10 %." }
-```
-
-**The LLM's behaviour** is `prompt.txt` (its persona; `{sensors}` is
-replaced by the current readings) and `description` in `agent.json`
-(what other agents' LLMs read to decide whether to ask you). **The
-model** is a device setting, so the same profile runs on a laptop and a
-Pi: `loquor config set model qwen2.5:1.5b`. Give the agent a **goal**
-and a trigger and it acts on its own:
-
-```json
-{ "type": "goal", "goal": "Warn the person here if any device nearby is overheating.", "triggers": ["notify"] }
-```
-
-Every field: [docs/USAGE.md](docs/USAGE.md). The contracts for sensors,
-triggers and skills: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-
-## When something is off
+## Try things by hand
 
 | question | command |
 |---|---|
-| Can this device run an agent at all? | `loquor doctor` — Python, Ollama, model, radio; each failure with its fix |
+| Can this device run it? | `loquor doctor` — Python, the LLM, the radio; each failure with its fix |
 | Does my profile build? Do my sensors read? | `loquor check agent.json` |
-| What does the running agent see and know? | `loquor status` — peers, readings, triggers fired, last LLM calls, goals |
-| Why did it decide *that*? | `loquor trace "My Agent" --full` — every prompt and reply of the last run |
+| What does this sensor read right now? | `loquor read agent.json [sensor]` |
+| Does this actuator work? | `loquor fire agent.json valve '{"seconds": 10}'` — schema-checked first |
+| What does that device say? | `loquor ask "Gardener" "question"` · `loquor ask "Tank Node"` (its readings) |
+| What does the running agent see? | `loquor status` — peers, readings, triggers fired, LLM calls, goal |
+| Why did it decide *that*? | `loquor trace "Greenhouse Controller" --full` — every prompt and reply |
 | What went over the radio? | `loquor run … --wire all` (envelopes), `-v` (beacons, readings) |
 
-## Two demos
+## Demos
 
-All run real agents, real protocol, real local LLMs. Only the hardware
-is **emulated**: the sensors invent plausible readings and the triggers
-print to the terminal instead of driving a display or a relay.
+Real devices' software, real protocol, real local LLMs; only the
+hardware is emulated (sensors invent readings, triggers print). Simplest
+first — [demo/README.md](demo/README.md):
 
-| demo | what it shows | files that make it |
-|---|---|---|
-| [**Weather & Clothes**](demo/weather_and_clothes/README.md) | two agents: a weather station with a sensor, and an advisor that finds it, asks for the forecast and shows an outfit card | 1 sensor, 1 trigger, 2 profiles |
-| [**Emergency Triage**](demo/triage/README.md) | three triage chairs measuring patients, and a nurse's device that asks all of them, decides whom to see first and shows the board | 1 sensor, 1 trigger, 4 profiles |
-| [**Greenhouse**](demo/greenhouse/README.md) | three sensor **nodes** with no LLM, one with a valve it offers, and one controller that collects their readings every 15 s, waters through the node's valve and vents | 0 sensors to write, 1 trigger, 4 profiles |
-
-```bash
-# weather & clothes: two terminals on one computer (the default transport is localhost)
-loquor run demo/weather_and_clothes/weather_agent.json
-loquor run demo/weather_and_clothes/clothing_agent.json
-
-# the same on two devices over Wi-Fi or Bluetooth: add --transport wifi | bluetooth to both
-```
+| demo | what it shows |
+|---|---|
+| [**Garden**](demo/garden/README.md) | one node, one agent: the agent reads the node only when asked |
+| [**Greenhouse**](demo/greenhouse/README.md) | three nodes, one with a valve; an agent that reads them every 15 s and waters through the node's valve or opens its own vent |
+| [**Weather & Clothes**](demo/weather_and_clothes/README.md) | a weather-station node and an agent that turns its reading into an outfit card, once |
+| [**Emergency Triage**](demo/triage/README.md) | LLM to LLM: three chairs assess their patients, a nurse's agent asks each and orders the board |
 
 Verified between a Mac and an Ubuntu laptop over Wi-Fi and over
-Bluetooth: discovery, handshake, encrypted request and reply, goal
-complete — no network at all.
+Bluetooth, no network at all.
 
 ## How it works
 
 ```
-   device A  (robot, chair, sensor node…)               device B  (laptop, handheld, machine…)
+   device A                                            device B
  ┌──────────────────────────────┐                     ┌──────────────────────────────┐
- │  sensors ─▶ LLM ─▶ triggers  │◀── Wi-Fi / BLE ───▶│  sensors ─▶ LLM ─▶ triggers  │
- │            agent             │  beacon · handshake │            agent             │
+ │ sensors ─▶ brain ─▶ triggers │◀── Wi-Fi / BLE ───▶ │ sensors          triggers    │
+ │            agent             │  beacon · handshake │        node (no brain)       │
  └──────────────────────────────┘  encrypted messages └──────────────────────────────┘
 ```
 
-1. **Identity.** First run: the agent makes a keypair and keeps it. Its id is a hash of its public key.
-2. **Discovery.** Every 10 s it sends a 16-byte **beacon**: "I'm here, here's what I can do."
-3. **Handshake.** On hearing a new beacon the agents exchange public keys and capability cards (**HELLO / HELLO_ACK**) and derive a shared key.
+1. **Identity.** First run: the device makes a keypair and keeps it. Its id is a hash of its public key.
+2. **Discovery.** Every 10 s it sends a 16-byte **beacon**.
+3. **Handshake.** Devices that hear each other exchange keys and **capability cards** — what each offers, which sensors it shares, which triggers — and derive a shared key.
 4. **Messages.** From then on every message is encrypted, signed, de-duplicated and acknowledged.
-5. **Skills.** A request names a *capability*; the agent hands it to the skill that owns it. Skills read sensors, call the LLM, ask peers, fire triggers.
-6. **Safety.** The LLM never fires anything itself. It *proposes* a trigger and an input; the agent validates the input against the trigger's schema and only then acts.
+5. **Using each other.** An agent mirrors a node's sensors and triggers as `node:name`; it reads them with a `sensor_report` request and fires them with `fire_trigger`. Agents ask each other questions (`ask`).
+6. **Safety.** The LLM never fires anything. It proposes `{reason, trigger, input}`; the input is validated against the trigger's schema on the agent and again on the node.
 
-```mermaid
-sequenceDiagram
-    participant S as sensor
-    participant A as agent A (asks)
-    participant B as agent B (answers)
-    participant T as trigger
-    B-->>A: beacon
-    A->>B: HELLO (key, capabilities)
-    B->>A: HELLO_ACK — shared key derived, encrypted from here
-    A->>B: request {capability, input}
-    S-->>B: reading
-    Note over B: LLM answers from the reading
-    B->>A: response {output}
-    Note over A: LLM concludes, proposes a trigger
-    A->>T: fire(input) — after schema validation
-```
-
-Byte-level detail and every rule: [docs/PROTOCOL.md](docs/PROTOCOL.md).
-
-## Architecture
-
-Five layers, one small interface each. Lower layers never import upper ones.
-
-```
- ~/.loquor/config.json  (this device: transport · model · beacon interval · logging)
- my_agent/agent.json ──▶ agent      dispatches requests to skills; hubs for sensors and triggers
-                          ├─ skills     business logic: llm_answer · goal · collect · sensor_report · offer_triggers · yours
-                          ├─ sensors    drivers that produce readings            (yours: one class)
-                          ├─ triggers   drivers that perform actions             (yours: one class)
-                          ├─ reasoning  the LLM behind one method                (Ollama · none · template · tracing)
-                          └─ protocol   identity · beacons · handshake · encrypted envelopes (AMP v1)
-                               └─ transports   bytes over a link: localhost · wifi · bluetooth
- loquor  (doctor · init · check · run · status · trace · config · service)
-```
-
-An agent is a **JSON profile** that names its parts; each part is a
-built-in name or `"file.py:Class"`. The full design, interfaces and the
-reasons behind them: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Byte-level detail: [docs/PROTOCOL.md](docs/PROTOCOL.md). Layers and
+interfaces: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Develop
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest            # 119 tests, no model, network or radio needed, ~5 s
+python -m pytest            # no model, network or radio needed, ~8 s
 ```
 
-## Documentation map
+## Documentation
 
 | read this for | document |
 |---|---|
-| installing on a laptop, a Pi or a device; Bluetooth prerequisites; running at boot | [docs/INSTALL.md](docs/INSTALL.md) |
-| the `loquor` commands, the device config, every profile field, debugging | [docs/USAGE.md](docs/USAGE.md) |
-| writing sensors, triggers, skills, transports; testing; conventions | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
+| the idea: sensors, triggers, brain; nodes and agents | [docs/CONCEPTS.md](docs/CONCEPTS.md) |
+| installing on a laptop, a Pi, a device; Bluetooth; running at boot | [docs/INSTALL.md](docs/INSTALL.md) |
+| connecting real sensors and actuators | [docs/HARDWARE.md](docs/HARDWARE.md) |
+| every command, profile field and device setting; reading the log; debugging | [docs/USAGE.md](docs/USAGE.md) |
+| writing sensors, triggers, skills, transports in Python; tests | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
 | the layers, interfaces and design decisions | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| what goes on the wire, with diagrams | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
-| why the project exists, where it is going | [docs/VISION.md](docs/VISION.md) · [docs/POC_PLAN.md](docs/POC_PLAN.md) |
-| running and reading the demos | [weather & clothes](demo/weather_and_clothes/README.md) · [triage](demo/triage/README.md) |
-| the logo and app icon, and how to use them | [assets/](assets/README.md) |
+| what goes on the wire | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
+| why the project exists | [docs/VISION.md](docs/VISION.md) · [history](docs/history/POC_PLAN.md) |
+| the logo and app icon | [assets/](assets/README.md) |
 
 ## Status
 
 | done | next |
 |---|---|
-| AMP v1: persisted identity, signed CBOR envelopes, beacons, handshake, encryption, acknowledgements, visibility policies | Session transports (bulk data over TCP / L2CAP) |
-| Extensions: capability queries, session negotiation, relay store-and-forward, trust levels with pinned keys | Pairing ceremony (QR / fingerprint) from the CLI |
-| Sensors and triggers with schema-validated LLM proposals; `goal` skill that gathers from many peers; `collect` skill; LLM-free nodes that report readings and offer triggers | A reference node firmware for microcontrollers (ESP32) |
-| Wi-Fi and Bluetooth transports, verified between a Mac and an Ubuntu laptop | UWB proximity; relay gossip message |
-| One-script install, `loquor` CLI with doctor / init / check / status / trace, device config, boot service | A PyPI release |
+| AMP v1: identity, signed CBOR envelopes, beacons, handshake, encryption, acknowledgements, visibility | Session transports (bulk data over TCP / L2CAP) |
+| Nodes without an LLM sharing sensors and triggers; agents reading them on demand and firing them remotely | Nodes pushing a reading when it crosses a threshold |
+| The brain: answers, goals once or every N s, asks other agents, acts through schema-checked triggers | Pairing ceremony (QR / fingerprint) from the CLI |
+| Built-in `file`, `command`, `http`, `gpio`, `serial` drivers; Ollama and OpenAI-compatible LLM servers | A node firmware for microcontrollers (ESP32) |
+| Wi-Fi and Bluetooth, verified between a Mac and an Ubuntu laptop | UWB proximity; relay gossip |
+| One-script install; `loquor` doctor · init · check · read · fire · ask · run · status · trace · service | A PyPI release |
 
 ## License
 
