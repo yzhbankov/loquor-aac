@@ -162,6 +162,7 @@ python -m pytest            # no model, network or radio needed, ~8 s
 | read this for | document |
 |---|---|
 | the idea: sensors, triggers, brain; nodes and agents | [docs/CONCEPTS.md](docs/CONCEPTS.md) |
+| where it is worth using, area by area, and where it is not | [docs/APPLICATIONS.md](docs/APPLICATIONS.md) |
 | installing on a laptop, a Pi, a device; Bluetooth; running at boot | [docs/INSTALL.md](docs/INSTALL.md) |
 | connecting real sensors and actuators | [docs/HARDWARE.md](docs/HARDWARE.md) |
 | every command, profile field and device setting; reading the log; debugging | [docs/USAGE.md](docs/USAGE.md) |
